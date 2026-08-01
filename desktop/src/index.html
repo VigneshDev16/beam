@@ -6,202 +6,197 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f5f6f8;
+      --bg: #f2f3f6;
+      --side: #e9ebf0;
       --card: #ffffff;
       --text: #1c1f24;
       --muted: #6b7280;
+      --faint: #9aa3af;
       --accent: #4f7cff;
       --ok: #23a55a;
       --err: #e5484d;
-      --border: #e3e6ea;
+      --border: #dfe2e8;
     }
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #16181d;
+        --side: #1b1e24;
         --card: #1f232b;
         --text: #eceff3;
         --muted: #9aa3af;
+        --faint: #6b7280;
         --border: #2c313a;
       }
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       font-family: -apple-system, system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
-      padding: 18px 20px;
+      overflow: hidden;
+      font-size: 13px;
     }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
-    .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
-    .tab {
-      flex: 1; text-align: center; padding: 8px 10px; font-size: 13px;
-      border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
-      background: transparent; color: var(--muted);
-    }
-    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-    .panel { display: none; }
-    .panel.active { display: block; }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin-bottom: 14px;
-    }
-    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
-    .addr { font-family: ui-monospace, monospace; font-size: 15px; }
-    .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-    button {
-      background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-      padding: 7px 12px; font-size: 13px; cursor: pointer;
-    }
-    button:disabled { opacity: 0.45; cursor: default; }
-    button.ghost { background: transparent; color: var(--accent); }
-    #transfers .item, #files .item {
-      padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px;
-    }
-    #transfers .item:first-child, #files .item:first-child { border-top: 0; }
-    .bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 8px; overflow: hidden; }
-    .bar > div { height: 100%; width: 0%; background: var(--accent); transition: width 0.15s; }
-    .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .file-link { cursor: grab; }
-    .file-link:hover { color: var(--accent); }
-    .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
-    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
-    .err { color: var(--err); font-size: 13px; }
+    .app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }
 
-    /* devices */
-    .device {
-      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
-      margin-top: 8px; cursor: pointer;
+    /* ------------------------------------------------------------ sidebar */
+    .sidebar {
+      background: var(--side);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+      padding-top: 34px; /* clears the inset traffic lights */
+      -webkit-app-region: drag;
     }
-    .device.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    .device .name { font-weight: 600; font-size: 14px; }
-    .device .why { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .sidebar button, .sidebar .item { -webkit-app-region: no-drag; }
+    .brand {
+      font-size: 15px; font-weight: 700; padding: 6px 16px 12px;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+    .dot.off { background: var(--faint); }
+    .side-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px 4px; font-size: 10px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--faint);
+    }
+    .side-head button {
+      background: none; border: 0; color: var(--muted); cursor: pointer;
+      font-size: 12px; padding: 2px 4px; border-radius: 4px;
+    }
+    .side-head button:hover { color: var(--accent); }
+    .item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 16px; cursor: pointer; border-left: 2px solid transparent;
+    }
+    .item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .item.sel {
+      background: color-mix(in srgb, var(--accent) 15%, transparent);
+      border-left-color: var(--accent);
+    }
+    .item.disabled { opacity: 0.5; cursor: default; }
+    .item.disabled:hover { background: none; }
+    .item .ico { font-size: 14px; line-height: 1.4; }
+    .item .txt { min-width: 0; flex: 1; }
+    .item .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item .sub { color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .side-empty { color: var(--faint); font-size: 11.5px; padding: 4px 16px 6px; }
+    .side-foot {
+      margin-top: auto; padding: 10px 16px; font-size: 11px; color: var(--faint);
+      border-top: 1px solid var(--border);
+    }
 
-    /* file explorer */
-    .crumbs { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
-    .listing { max-height: 260px; overflow-y: auto; border-top: 1px solid var(--border); border-radius: 6px; }
-    .entry {
-      display: flex; align-items: center; gap: 10px;
-      padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 13.5px;
+    /* --------------------------------------------------------------- main */
+    /* min-height:0 on both, or a long listing expands instead of scrolling
+       and pushes the status bar off the bottom of the window. */
+    .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .mainbar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
     }
-    .entry .nm { flex: 1; cursor: grab; }
-    .entry .nm:active { cursor: grabbing; }
-    .entry .sz { color: var(--muted); font-size: 12px; }
-    .entry input { accent-color: var(--accent); }
-
-    /* drop targets */
-    .dropzone {
-      border: 1.5px dashed var(--border); border-radius: 10px;
-      padding: 14px; text-align: center; color: var(--muted); font-size: 13px;
-      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    .mainbar * { -webkit-app-region: no-drag; }
+    .crumbs {
+      flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px;
+      color: var(--muted); white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .dropzone.over {
-      border-color: var(--accent); color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-    .listing.over { outline: 2px solid var(--accent); outline-offset: -2px; }
-
-    /* explorer toolbar */
-    .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
     .tool {
       background: transparent; color: var(--text); font-size: 12px;
-      border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px;
+      border: 1px solid var(--border); border-radius: 7px; padding: 5px 9px;
+      cursor: pointer; white-space: nowrap;
     }
+    .tool:disabled { opacity: 0.4; cursor: default; }
     .tool:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
     .tool.danger:not(:disabled):hover { border-color: var(--err); color: var(--err); }
+    .tool.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tool.primary:disabled { background: var(--border); border-color: var(--border); color: var(--muted); }
+
+    .content { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0; }
+    .content.over { outline: 2px solid var(--accent); outline-offset: -6px; }
+
+    .entry {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 16px; border-bottom: 1px solid var(--border);
+    }
+    .entry:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
     .entry.cut { opacity: 0.45; }
+    .entry input { accent-color: var(--accent); }
+    .entry .nm { flex: 1; min-width: 0; cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .entry .nm.file { cursor: grab; }
+    .entry .nm.dir { cursor: pointer; }
+    .entry .sz { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
     .rename-input {
-      flex: 1; font-size: 13.5px; font-family: inherit;
+      flex: 1; font-size: 13px; font-family: inherit;
       background: var(--bg); color: var(--text);
       border: 1px solid var(--accent); border-radius: 6px; padding: 3px 6px;
     }
+
+    .blank {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 10px; color: var(--muted); text-align: center; padding: 30px;
+    }
+    .blank .big { font-size: 34px; }
+    .blank .hint { font-size: 12.5px; max-width: 420px; line-height: 1.5; }
+    .dropbox {
+      border: 1.5px dashed var(--border); border-radius: 12px;
+      padding: 26px 34px; color: var(--muted); font-size: 13px;
+    }
+    .dropbox.over { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .err { color: var(--err); }
+
+    .statusbar {
+      display: flex; align-items: center; gap: 12px;
+      border-top: 1px solid var(--border); padding: 7px 14px;
+      font-size: 11.5px; color: var(--muted); min-height: 34px;
+    }
+    .bar { flex: 1; max-width: 220px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0%; background: var(--accent); transition: width 0.15s; }
   </style>
 </head>
 <body>
-  <h1><span class="dot"></span>Beam</h1>
-  <div class="sub" id="device-name">Ready to receive files</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="dot" id="live-dot"></span>Beam</div>
 
-  <div class="tabs">
-    <button class="tab active" data-tab="wifi">Wi-Fi</button>
-    <button class="tab" data-tab="cable">Cable (USB)</button>
-  </div>
+      <div class="side-head">This Mac</div>
+      <div id="side-mac"></div>
 
-  <!-- ------------------------------------------------------------ Wi-Fi -->
-  <div class="panel active" id="panel-wifi">
-    <div class="card">
-      <div class="label">This laptop's address</div>
-      <div class="addr" id="addr">…</div>
-      <div class="meta">Your phone finds this automatically when both are on the same Wi-Fi.</div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <div class="label" style="margin:0">Send to a phone</div>
-        <button class="ghost" id="wifi-rescan">Rescan</button>
+      <div class="side-head">
+        <span>USB</span><button id="refresh-usb" title="Rescan USB">⟳</button>
       </div>
-      <div id="wifi-devices"><div class="empty">Turn on "Receive files" in the phone app, then Rescan.</div></div>
-      <div class="dropzone" id="wifi-drop" style="margin-top:10px">
-        Drag files here to send them to the selected phone
-      </div>
-      <div class="meta" id="wifi-status"></div>
-      <div class="bar" id="wifi-bar" style="display:none"><div></div></div>
-    </div>
+      <div id="side-usb"><div class="side-empty">Looking…</div></div>
 
-    <div class="card">
-      <div class="label" style="margin:0">Incoming transfers</div>
-      <div id="transfers"><div class="empty">Nothing incoming yet.</div></div>
-    </div>
-  </div>
-
-  <!-- ------------------------------------------------------------ Cable -->
-  <div class="panel" id="panel-cable">
-    <div class="card">
-      <div class="row">
-        <div class="label" style="margin:0">Phones connected by USB</div>
-        <button class="ghost" id="cable-refresh">Refresh</button>
+      <div class="side-head">
+        <span>Wi-Fi</span><button id="refresh-wifi" title="Rescan network">⟳</button>
       </div>
-      <div id="cable-devices"><div class="empty">Looking for devices…</div></div>
-      <div class="meta" id="cable-tools"></div>
-    </div>
+      <div id="side-wifi"><div class="side-empty">Looking…</div></div>
 
-    <div class="card" id="cable-browser" style="display:none">
-      <div class="row">
-        <div class="label" style="margin:0">Files on phone</div>
-        <button class="ghost" id="cable-up">↑ Up</button>
-      </div>
-      <div class="crumbs" id="cable-path"></div>
-      <div class="toolbar">
+      <div class="side-foot" id="side-foot">—</div>
+    </aside>
+
+    <main class="main">
+      <div class="mainbar">
+        <button class="tool" id="nav-up" title="Up one folder">↑</button>
+        <div class="crumbs" id="crumbs"></div>
         <button class="tool" id="op-newfolder">New folder</button>
-        <button class="tool" id="op-rename" disabled>Rename</button>
-        <button class="tool" id="op-cut" disabled>Cut</button>
-        <button class="tool" id="op-paste" disabled>Paste here</button>
-        <button class="tool danger" id="op-delete" disabled>Delete</button>
+        <button class="tool" id="op-rename">Rename</button>
+        <button class="tool" id="op-cut">Cut</button>
+        <button class="tool" id="op-paste">Paste</button>
+        <button class="tool danger" id="op-delete">Delete</button>
+        <button class="tool primary" id="op-copy">Copy to Mac</button>
       </div>
-      <div class="listing" id="cable-listing"></div>
-      <div class="meta">Drag files out to Finder, or drop files here to copy them onto the phone.</div>
-      <div class="row" style="margin-top:10px">
-        <div class="meta" id="cable-status">Nothing selected</div>
-        <button id="cable-copy" disabled>Copy to Mac</button>
+
+      <div class="content" id="content"></div>
+
+      <div class="statusbar">
+        <span id="status">Ready</span>
+        <div class="bar" id="bar"><div></div></div>
       </div>
-      <div class="bar" id="cable-bar" style="display:none"><div></div></div>
-    </div>
+    </main>
   </div>
 
-  <!-- ------------------------------------------------- received (shared) -->
-  <div class="card">
-    <div class="row">
-      <div class="label" style="margin:0">Received files</div>
-      <button class="ghost" onclick="beam.openFolder()">Open folder</button>
-    </div>
-    <div id="files"><div class="empty">No files received in this session.</div></div>
-  </div>
-
-  <script src="renderer.js"></script>
-  <script src="cable-ui.js"></script>
-  <script src="wifi-ui.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

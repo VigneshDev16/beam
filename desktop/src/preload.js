@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('beam', {
   // Electron 33 removed File.path; this is the supported replacement.
   pathForFile: (file) => webUtils.getPathForFile(file),
   startDrag: (paths) => ipcRenderer.send('drag:start', paths),
+  listLocal: (dirPath) => ipcRenderer.invoke('local:listDir', dirPath),
 });
 
 contextBridge.exposeInMainWorld('cable', {

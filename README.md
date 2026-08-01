@@ -85,6 +85,20 @@ To run from source instead:
 cd desktop && npm install && npm start
 ```
 
+## The window
+
+Two panes, like a file manager:
+
+- **Left — devices.** *This Mac* (the Beam folder), *USB* (cabled Androids), and
+  *Wi-Fi* (phones running the mobile app's receive mode). Phones that are
+  plugged in but unreachable appear greyed out with the reason.
+- **Right — explorer.** Breadcrumb, toolbar, and the file listing for whatever
+  is selected, with a status bar underneath for progress.
+
+What the right pane shows depends on the selection: the Beam folder and cabled
+phones are browsable, while a Wi-Fi phone becomes a drop target — phones can
+receive over the network but expose no API for browsing them.
+
 ## Managing files on the phone
 
 With a USB-debugging phone selected, the Cable tab is a real file manager, not

@@ -113,8 +113,11 @@ function startServer() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 500,
-    height: 820,
+    width: 1000,
+    height: 680,
+    minWidth: 760,
+    minHeight: 520,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     title: 'Beam',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -140,6 +143,33 @@ ipcMain.on('beam:openFile', (_e, filePath) => {
 ipcMain.on('beam:openFolder', () => {
   fs.mkdirSync(SAVE_DIR, { recursive: true });
   shell.openPath(SAVE_DIR);
+});
+
+/**
+ * Browse the Mac side of the two-pane view. Confined to SAVE_DIR: the renderer
+ * should never be able to walk the whole filesystem.
+ */
+ipcMain.handle('local:listDir', async (_e, dirPath) => {
+  fs.mkdirSync(SAVE_DIR, { recursive: true });
+  const target = path.resolve(dirPath || SAVE_DIR);
+  if (target !== SAVE_DIR && !target.startsWith(`${SAVE_DIR}${path.sep}`)) {
+    throw new Error('Outside the Beam folder.');
+  }
+  const entries = fs.readdirSync(target, { withFileTypes: true }).map((d) => {
+    const full = path.join(target, d.name);
+    let size = null;
+    try {
+      const st = fs.statSync(full);
+      size = d.isDirectory() ? null : st.size;
+    } catch {
+      /* unreadable entry: show it with no size */
+    }
+    return { name: d.name, path: full, isDir: d.isDirectory(), size };
+  });
+  entries.sort((a, b) =>
+    a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1
+  );
+  return { path: target, entries, root: SAVE_DIR };
 });
 
 ipcMain.handle('cable:listDevices', async () => {
