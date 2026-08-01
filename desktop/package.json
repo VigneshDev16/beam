@@ -1,0 +1,52 @@
+{
+  "name": "beam-desktop",
+  "productName": "Beam",
+  "version": "0.1.0",
+  "description": "Move files between your phone and laptop over Wi-Fi or USB",
+  "main": "src/main.js",
+  "author": "Vicky",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0"
+  },
+  "build": {
+    "appId": "com.vicky.beam",
+    "productName": "Beam",
+    "files": [
+      "src/**/*",
+      "build/icon.icns"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Beam finds your phone on the local network to transfer files.",
+        "LSUIElement": false
+      }
+    },
+    "dmg": {
+      "title": "Beam ${version}"
+    }
+  }
+}

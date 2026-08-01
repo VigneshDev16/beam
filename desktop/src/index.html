@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Beam</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f6f8;
+      --card: #ffffff;
+      --text: #1c1f24;
+      --muted: #6b7280;
+      --accent: #4f7cff;
+      --ok: #23a55a;
+      --err: #e5484d;
+      --border: #e3e6ea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181d;
+        --card: #1f232b;
+        --text: #eceff3;
+        --muted: #9aa3af;
+        --border: #2c313a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 18px 20px;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+    .tab {
+      flex: 1; text-align: center; padding: 8px 10px; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 9px; cursor: pointer;
+      background: transparent; color: var(--muted);
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+    .addr { font-family: ui-monospace, monospace; font-size: 15px; }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    button {
+      background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+      padding: 7px 12px; font-size: 13px; cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    button.ghost { background: transparent; color: var(--accent); }
+    #transfers .item, #files .item {
+      padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px;
+    }
+    #transfers .item:first-child, #files .item:first-child { border-top: 0; }
+    .bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0%; background: var(--accent); transition: width 0.15s; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .file-link { cursor: grab; }
+    .file-link:hover { color: var(--accent); }
+    .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+    .err { color: var(--err); font-size: 13px; }
+
+    /* devices */
+    .device {
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      margin-top: 8px; cursor: pointer;
+    }
+    .device.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .device .name { font-weight: 600; font-size: 14px; }
+    .device .why { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+    /* file explorer */
+    .crumbs { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+    .listing { max-height: 260px; overflow-y: auto; border-top: 1px solid var(--border); border-radius: 6px; }
+    .entry {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 13.5px;
+    }
+    .entry .nm { flex: 1; cursor: grab; }
+    .entry .nm:active { cursor: grabbing; }
+    .entry .sz { color: var(--muted); font-size: 12px; }
+    .entry input { accent-color: var(--accent); }
+
+    /* drop targets */
+    .dropzone {
+      border: 1.5px dashed var(--border); border-radius: 10px;
+      padding: 14px; text-align: center; color: var(--muted); font-size: 13px;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .dropzone.over {
+      border-color: var(--accent); color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    .listing.over { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+    /* explorer toolbar */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .tool {
+      background: transparent; color: var(--text); font-size: 12px;
+      border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px;
+    }
+    .tool:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+    .tool.danger:not(:disabled):hover { border-color: var(--err); color: var(--err); }
+    .entry.cut { opacity: 0.45; }
+    .rename-input {
+      flex: 1; font-size: 13.5px; font-family: inherit;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--accent); border-radius: 6px; padding: 3px 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1><span class="dot"></span>Beam</h1>
+  <div class="sub" id="device-name">Ready to receive files</div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="wifi">Wi-Fi</button>
+    <button class="tab" data-tab="cable">Cable (USB)</button>
+  </div>
+
+  <!-- ------------------------------------------------------------ Wi-Fi -->
+  <div class="panel active" id="panel-wifi">
+    <div class="card">
+      <div class="label">This laptop's address</div>
+      <div class="addr" id="addr">…</div>
+      <div class="meta">Your phone finds this automatically when both are on the same Wi-Fi.</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="label" style="margin:0">Send to a phone</div>
+        <button class="ghost" id="wifi-rescan">Rescan</button>
+      </div>
+      <div id="wifi-devices"><div class="empty">Turn on "Receive files" in the phone app, then Rescan.</div></div>
+      <div class="dropzone" id="wifi-drop" style="margin-top:10px">
+        Drag files here to send them to the selected phone
+      </div>
+      <div class="meta" id="wifi-status"></div>
+      <div class="bar" id="wifi-bar" style="display:none"><div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="label" style="margin:0">Incoming transfers</div>
+      <div id="transfers"><div class="empty">Nothing incoming yet.</div></div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ Cable -->
+  <div class="panel" id="panel-cable">
+    <div class="card">
+      <div class="row">
+        <div class="label" style="margin:0">Phones connected by USB</div>
+        <button class="ghost" id="cable-refresh">Refresh</button>
+      </div>
+      <div id="cable-devices"><div class="empty">Looking for devices…</div></div>
+      <div class="meta" id="cable-tools"></div>
+    </div>
+
+    <div class="card" id="cable-browser" style="display:none">
+      <div class="row">
+        <div class="label" style="margin:0">Files on phone</div>
+        <button class="ghost" id="cable-up">↑ Up</button>
+      </div>
+      <div class="crumbs" id="cable-path"></div>
+      <div class="toolbar">
+        <button class="tool" id="op-newfolder">New folder</button>
+        <button class="tool" id="op-rename" disabled>Rename</button>
+        <button class="tool" id="op-cut" disabled>Cut</button>
+        <button class="tool" id="op-paste" disabled>Paste here</button>
+        <button class="tool danger" id="op-delete" disabled>Delete</button>
+      </div>
+      <div class="listing" id="cable-listing"></div>
+      <div class="meta">Drag files out to Finder, or drop files here to copy them onto the phone.</div>
+      <div class="row" style="margin-top:10px">
+        <div class="meta" id="cable-status">Nothing selected</div>
+        <button id="cable-copy" disabled>Copy to Mac</button>
+      </div>
+      <div class="bar" id="cable-bar" style="display:none"><div></div></div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------- received (shared) -->
+  <div class="card">
+    <div class="row">
+      <div class="label" style="margin:0">Received files</div>
+      <button class="ghost" onclick="beam.openFolder()">Open folder</button>
+    </div>
+    <div id="files"><div class="empty">No files received in this session.</div></div>
+  </div>
+
+  <script src="renderer.js"></script>
+  <script src="cable-ui.js"></script>
+  <script src="wifi-ui.js"></script>
+</body>
+</html>

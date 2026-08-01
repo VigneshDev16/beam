@@ -1,0 +1,11 @@
+node_modules/
+desktop/release/
+desktop/build/icon.iconset/
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/ios/Pods/
+mobile/ios/build/
+mobile/ios/.xcode.env.local
+*.log
+.DS_Store
