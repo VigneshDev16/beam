@@ -1,213 +1,249 @@
+<div align="center">
+
 # Beam
 
-Move files between your phones and laptop — over Wi-Fi, or over a USB cable.
-No cloud.
+**Move files between your phone and your laptop — over Wi-Fi or a USB cable.
+No cloud, no account, no upload limits.**
+
+[![platform](https://img.shields.io/badge/desktop-macOS-black)](#install)
+[![mobile](https://img.shields.io/badge/mobile-Android%20%7C%20iOS-3ddc84)](#the-mobile-app)
+[![stack](https://img.shields.io/badge/stack-Electron%20%2B%20React%20Native-4f7cff)](#how-it-works)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+![Beam in action](docs/screenshots/demo.gif)
+
+*Browsing a connected phone and copying files to the Mac — the whole round trip.*
+
+</div>
+
+---
+
+## Why I built this
+
+Getting a file off an Android phone onto a Mac is genuinely annoying. Google's
+**Android File Transfer was discontinued**, AirDrop doesn't speak to Android,
+and everything else wants you to upload a private file to somebody's server and
+download it again — slow, and a strange thing to do with your own photos.
+
+Beam does the obvious thing instead: your phone and your laptop are already on
+the same Wi-Fi, so they should just talk to each other. And when they're joined
+by a cable, that should work too.
+
+**One file transfers in the time it takes a cloud app to finish uploading.**
+
+## What it does
+
+| | |
+| --- | --- |
+| 📶 **Wi-Fi transfer, both directions** | Phone → laptop and laptop → phone, over your local network. Devices find each other automatically. |
+| 🔌 **USB cable mode** | Browse a connected Android like a drive and copy files either way. |
+| 🗂 **Manage the phone's files** | Create folders, rename, move, delete — from your laptop. |
+| 🖱 **Real drag and drop** | Drag files out of the phone into Finder; drag files from Finder onto the phone. |
+| 🍎 **Works with iPhone too** | Over Wi-Fi. iOS gives no USB file access to anyone, so cable mode is Android-only. |
+| 🔒 **Nothing leaves your network** | No server, no account, no telemetry. |
+
+## Screenshots
+
+### Desktop — a two-pane file manager
+
+Devices on the left, an explorer on the right. Everything that's reachable
+appears in one place: this Mac, phones on USB, and phones on Wi-Fi.
+
+![Desktop explorer](docs/screenshots/explorer.png)
+
+Phones that are plugged in but *not* usable don't silently disappear — they're
+listed with the actual reason and what to do about it (that greyed-out Samsung
+is a macOS restriction explained [below](#the-hard-part-macos-and-mtp)).
+
+![Selecting files](docs/screenshots/selected.png)
+
+### Mobile — Android and iOS, one codebase
+
+<p align="center">
+  <img src="docs/screenshots/android.png" width="300" alt="Beam on Android" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ios.png" width="300" alt="Beam on iOS" />
+</p>
+
+Left: Android has found both the MacBook and the iPhone on the network.
+Right: iOS in receive mode, showing files as they arrive.
+
+## How it works
+
+Every device speaks the same tiny HTTP protocol. There is no central server —
+each device is both a client and a server.
+
+```mermaid
+graph LR
+  subgraph "Your Wi-Fi"
+    M["💻 Mac<br/>Electron app<br/>:8790"]
+    A["🤖 Android<br/>React Native<br/>:8791"]
+    I["📱 iPhone<br/>React Native<br/>:8791"]
+  end
+  M <-->|"GET /info<br/>POST /upload"| A
+  M <-->|"GET /info<br/>POST /upload"| I
+  A <-->|"GET /info<br/>POST /upload"| I
+  M -.->|"adb: browse, pull,<br/>push, mkdir, mv, rm"| A
+```
+
+**Two endpoints, that's the whole protocol:**
+
+- `GET /info` → `{"app":"beam","name":"Vickys-MacBook","platform":"darwin"}`
+- `POST /upload?from=<sender>` → a multipart file upload
+
+**Discovery is a subnet sweep, deliberately.** A device reads its own Wi-Fi IP,
+then probes `/info` on all 254 addresses of its `/24` in parallel. The obvious
+alternative — mDNS/Bonjour — needs a different native library on every platform,
+behaves differently on each, and is exactly the kind of dependency that breaks
+six months later. A parallel HTTP sweep is a few dozen lines, has no
+dependencies, and behaves identically on macOS, Android and iOS. It finishes in
+about a second.
+
+**Ports carry meaning:** `8790` = laptops, `8791` = phones. A scanner that finds
+`8791` knows it found a phone before it parses anything.
+
+### Project layout
 
 ```
 beam/
-├── desktop/   Electron app: Wi-Fi receiver + USB cable browser
-└── mobile/    React Native app for Android + iOS (send and receive)
+├── desktop/          Electron app (the Mac side)
+│   └── src/
+│       ├── main.js       receiver, IPC, native drag, confirm dialogs
+│       ├── cable.js      USB: adb + libmtp backends, file operations
+│       ├── wifi-send.js  discovery sweep + upload
+│       └── app.js        the two-pane UI
+└── mobile/           React Native app (Android + iOS)
+    ├── src/              discovery, upload, receiver bridge
+    └── android|ios/      native receive-mode modules
 ```
 
-## Cable mode (USB)
+The phone's receiver is native on both platforms — **NanoHTTPD** (Kotlin) on
+Android, **GCDWebServer** (Objective-C) on iOS — bridged to one shared JS API,
+so the React Native side stays identical across platforms.
 
-The desktop app's **Cable** tab reads files straight off a USB-connected
-Android — browse its folders, tick the files you want, copy them to
-`~/Downloads/Beam`. Nothing needs to be installed on the phone; this is the job
-Google's discontinued Android File Transfer used to do on macOS.
+## Install
 
-Two backends, picked automatically:
-
-| Backend | Phone setup | Notes |
-| --- | --- | --- |
-| **adb** | USB debugging enabled once | **the reliable path on macOS**; fast, byte-level progress, works with emulators |
-| **MTP** (libmtp) | none — just pick "File transfer" in the USB notification | needs `brew install libmtp`; **usually blocked on macOS**, see below |
-
-### Why MTP usually fails on macOS
-
-Most Android phones expose their MTP endpoint as **USB interface class 6
-(Still Image / PTP)**. macOS automatically binds its own Image Capture daemons
-(`ptpcamerad`, `mscamerad-xpc`) to any class-6 interface, and libusb cannot
-detach a kernel driver on macOS — so `libusb_claim_interface()` returns `-3`
-(access denied) and libmtp panics with "Unable to open raw device".
-
-Confirmed on a Samsung Galaxy (`04e8:6860`): the phone enumerates fine and
-`mtp-detect` identifies it, but claiming the interface fails. Quitting Google's
-Android File Transfer agent does **not** help, and the Apple daemons are
-SIP-protected, so they cannot be killed to free the interface.
-
-The app detects this precisely and greys the device out with the reason and the
-fix, rather than showing an empty file list. **Enable USB debugging** and the
-same phone works over the adb backend.
-
-A phone with USB debugging on shows up under both; the app prefers adb. Phones
-that are plugged in but not yet authorised are listed greyed out with the reason
-("Unlock the phone and tap Allow USB debugging").
-
-**iPhones cannot do this.** iOS exposes no MTP and no USB filesystem, so
-anything involving an iPhone has to go over Wi-Fi. This is an Apple restriction,
-not a missing feature.
-
-## How Wi-Fi mode works
-
-Every device runs the same tiny HTTP protocol:
-
-- `GET /info` → `{app: "beam", name, platform}` so others can identify it.
-- `POST /upload?from=<sender>` → multipart file upload.
-
-Ports: **8790** for laptops, **8791** for phones. A sender gets its own Wi-Fi IP,
-sweeps the /24 subnet probing `/info` on both ports, and lists everything that
-answers. No mDNS/Bonjour native modules — a plain HTTP scan behaves identically
-on Android, iOS, and every desktop OS.
-
-Received files land in `~/Downloads/Beam` (desktop), `Download/Beam` via
-MediaStore (Android), and the app's Documents folder, visible in the Files app
-(iOS).
-
-Phones only listen while "Receive files" is on; the server is off by default.
-
-## Install the desktop app
+### Desktop (macOS, Apple Silicon)
 
 ```bash
 cd desktop && npm install && npm run dist
 ```
 
-That produces `desktop/release/Beam-<version>-arm64.dmg` (Apple Silicon). Open
-it and drag Beam to Applications like any Mac app.
+Open `desktop/release/Beam-0.1.0-arm64.dmg` and drag Beam to Applications.
 
-The build is **not code-signed**, so the first launch needs
-right-click → Open (or System Settings → Privacy & Security → Open Anyway).
-Signing needs a paid Apple Developer ID.
+> The build isn't code-signed (that needs a paid Apple Developer ID), so the
+> first launch needs **right-click → Open**.
 
-To run from source instead:
+Or run it from source with `npm start`.
 
-```bash
-cd desktop && npm install && npm start
-```
-
-## The window
-
-Two panes, like a file manager:
-
-- **Left — devices.** *This Mac* (the Beam folder), *USB* (cabled Androids), and
-  *Wi-Fi* (phones running the mobile app's receive mode). Phones that are
-  plugged in but unreachable appear greyed out with the reason.
-- **Right — explorer.** Breadcrumb, toolbar, and the file listing for whatever
-  is selected, with a status bar underneath for progress.
-
-What the right pane shows depends on the selection: the Beam folder and cabled
-phones are browsable, while a Wi-Fi phone becomes a drop target — phones can
-receive over the network but expose no API for browsing them.
-
-## Managing files on the phone
-
-With a USB-debugging phone selected, the Cable tab is a real file manager, not
-just a viewer. Tick any files or folders, then:
-
-| Action | What it does |
-| --- | --- |
-| **New folder** | creates a folder in the folder you're viewing |
-| **Rename** | edits the name inline (one item at a time) |
-| **Cut** → **Paste here** | moves items: cut, open the destination, paste |
-| **Delete** | removes files and folders **permanently** |
-| **Copy to Mac** | pulls the selection into `~/Downloads/Beam` |
-
-Guardrails, because a phone has no trash and a bad path is unrecoverable:
-
-- Delete always shows a confirmation naming what will go, with **Cancel** as the
-  default button, and says explicitly when folders are included.
-- Names are validated — empty, `/`, `.` and `..` are rejected, so a rename can
-  never escape the current folder.
-- Creating or moving onto an existing name is refused rather than overwriting.
-- Moving a folder into itself is refused.
-- Every path is shell-quoted before it reaches `adb shell`, so spaces and quotes
-  in filenames are safe.
-
-These operations need **adb** (USB debugging). MTP is read-only here.
-
-## Drag and drop
-
-The desktop app behaves like a file explorer in both directions:
-
-- **Drag files out** of the phone's file list, or out of "Received files",
-  straight into Finder. Phone files aren't on disk yet, so the first drag
-  fetches a copy and says when it's ready — drag again and it drops instantly.
-- **Drag files in** from Finder onto the phone's file list to copy them into the
-  folder you're viewing (cable, needs USB debugging), or onto the Wi-Fi tab's
-  drop zone to send them to a phone over the network.
-
-## Run the mobile app
+### The mobile app
 
 ```bash
 cd mobile && npm install
-npx react-native start
+npx react-native start          # Metro, in one terminal
+npx react-native run-android    # in another
 ```
 
-Then, in a second terminal:
-
-```bash
-npx react-native run-android
-```
-
-For iOS, install pods first (needs a UTF-8 locale or CocoaPods crashes):
+For iOS, install pods first — CocoaPods needs a UTF-8 locale or it crashes:
 
 ```bash
 cd mobile/ios && LANG=en_US.UTF-8 pod install && cd .. && npx react-native run-ios
 ```
 
-## Verified end to end
+## Using it
 
-- Mac → Android (3 MB and 1 MB files, checksums matched)
-- Android → Mac (2 MB file, checksum matched)
-- Android → iPhone (1 MB file, checksum matched after two hops)
-- Cable/adb: device detection, folder browsing, and a 2.5 MB copy (checksum
-  matched), including filenames containing spaces
-- Cable/adb on a **physical Galaxy S23 (SM-S918B)**: push a 1.5 MB file to the
-  phone and pull it back, checksum matched both ways
-- Packaged `.app` launches and serves `/info` (the bundle finds `adb`, `ioreg`
-  and the libmtp tools by absolute path, so it does not depend on shell PATH)
-- File operations on the physical Galaxy, run inside a throwaway folder: create
-  nested folders, rename, move, recursive delete, plus the refusals (duplicate
-  name, folder into itself) — all confirmed, then the scratch folder removed
+**Over Wi-Fi:** open Beam on both devices, turn on *Receive files* on the phone,
+and each shows up in the other's list. Pick files and send, or drag files onto
+the laptop's drop zone.
 
-Wi-Fi results are on emulator/simulator, where both phones reach the Mac at
-`10.0.2.2`.
+**Over a cable:** connect an Android with **USB debugging** enabled. It appears
+under *USB*, and the right pane becomes a file browser: tick files and
+*Copy to Mac*, drag them into Finder, or drop files in to copy them the other
+way.
 
-The **MTP backend has never successfully transferred a file** — on a real
-Samsung Galaxy it is blocked by macOS (see above). It is kept because the same
-code path is expected to work on Linux/Windows and on phones that expose MTP
-outside USB class 6, but treat it as unproven.
+**Managing phone files** (cable, USB debugging): *New folder*, *Rename*,
+*Cut* → *Paste* to move, and *Delete*.
 
-## Environment notes (this Mac)
+Because a phone has no trash, deleting is guarded: a confirmation names exactly
+what will go with **Cancel** as the default, names are validated so a rename can
+never escape its folder, nothing silently overwrites, and every path is
+shell-quoted before it reaches `adb`.
 
-- `android/gradle.properties` pins Gradle to Android Studio's JDK 21 via
-  `org.gradle.java.home` — the system default JDK 25 fails the CMake step.
-- `reactNativeArchitectures=arm64-v8a` keeps dev APKs small; restore all four
-  ABIs before building a release APK for other phones.
-- `ios/.xcode.env.local` sets `NODE_PATH` so React Native's codegen script can
-  resolve modules when Xcode runs it from outside the project tree.
-- Cleartext HTTP is enabled on both platforms — LAN transfers are plain HTTP by
-  design.
+## The hard part: macOS and MTP
 
-## Known gaps
+The most interesting bug in this project wasn't in my code.
 
-- Transfers are unauthenticated and unencrypted: anything on your Wi-Fi that
-  finds the port can send you a file, and receivers accept silently. Receiver
-  approval + a pairing code are the next thing to build.
-- Discovery is a 254-host sweep; on a large or slow network it takes a few
-  seconds and may miss devices behind AP client isolation.
-- Verified only on emulators so far, not on physical hardware.
-- iOS keeps the server alive only while the app is foregrounded.
+Android phones expose file transfer over **MTP**, and the plan was to use
+`libmtp` so no phone setup was needed. On macOS it fails, and the failure is
+worth understanding:
+
+```
+Device 0 (VID=04e8 and PID=6860) is a Samsung Galaxy models (MTP).
+error returned by libusb_claim_interface() = -3
+LIBMTP PANIC: Unable to initialize device
+```
+
+Most phones present their MTP endpoint as **USB interface class 6
+(Still Image / PTP)** — the same class as a camera. macOS automatically binds
+its own Image Capture daemons (`ptpcamerad`, `mscamerad-xpc`) to any class-6
+interface, and **libusb cannot detach a kernel driver on macOS**. So the port is
+taken before any app gets a look in. Quitting Android File Transfer doesn't help,
+and the Apple daemons are SIP-protected — they respawn instantly if you kill
+them. This is why Android File Transfer was always unreliable on a Mac.
+
+`ioreg -p IOUSB -w0 -l` tells the story: the phone's interface is right there,
+labelled `MTP@0` with `bInterfaceClass = 6`.
+
+**The fix was product, not code.** Beam detects this exact failure and tells you
+what's happening and what to do, instead of the empty file list that a naive
+implementation shows. The `adb` backend then does the job properly for anyone
+who turns on USB debugging.
+
+> A lesson worth keeping: an error you can't fix is still worth *naming*
+> precisely. "No files found" is a bug report; "macOS is holding this phone —
+> here's the alternative" is a product.
+
+## Honest limitations
+
+- **Transfers are unauthenticated and unencrypted.** Anything on your Wi-Fi that
+  finds the port can send you a file, and receivers accept silently. Fine on a
+  home network, not on café Wi-Fi. Receiver approval and TLS are the next things
+  to build.
+- **Cable features need USB debugging**; MTP is read-only and blocked on macOS.
+- **iPhones can't use USB at all** — Apple exposes no MTP or filesystem there.
+- **Individual files only**; dragging whole folders isn't supported yet.
+- **The Mac build is unsigned**, and only Apple Silicon is built today.
+- iOS keeps its receiver running only while the app is in the foreground.
+
+## What's verified
+
+Every transfer path was checked with **matching MD5 checksums**, not just a
+success message:
+
+| Path | Result |
+| --- | --- |
+| Mac → Android (Wi-Fi) | ✅ checksum matched |
+| Android → Mac (Wi-Fi) | ✅ checksum matched |
+| Android → iPhone (Wi-Fi) | ✅ checksum matched |
+| Mac → iPhone (Wi-Fi) | ✅ checksum matched |
+| Mac ↔ Galaxy S23 (cable) | ✅ both directions, checksums matched |
+| Phone file operations | ✅ on a physical Galaxy S23 |
 
 ## Roadmap
 
-- [x] Phase 1: Android → laptop
-- [x] Phase 2: iOS app; phones can receive; Android ↔ iPhone
-- [x] Phase 3: USB cable mode on the desktop (MTP + adb, Android only)
-- [x] Phase 4: installable `.dmg`, drag-in/drag-out, laptop → phone over Wi-Fi
-- [x] Phase 5: file management on the phone (new folder, rename, move, delete)
-- [ ] Copy/duplicate on the phone, and multi-level undo
-- [ ] Drag whole folders from Finder (only individual files work today)
-- [ ] Code-sign and notarise the Mac build
-- [ ] Receiver approval prompt, pairing code, transfer history
+- [ ] Receiver approval prompt + pairing code
 - [ ] TLS for transfers
+- [ ] Copy/duplicate on the phone, and undo
+- [ ] Folder drag-and-drop
+- [ ] Code-signed and notarised Mac build, Windows and Linux builds
+
+---
+
+<div align="center">
+
+Built with Electron, React Native, and a deep dislike of uploading my own photos
+to somebody else's computer.
+
+MIT licensed — see [LICENSE](LICENSE).
+
+</div>
