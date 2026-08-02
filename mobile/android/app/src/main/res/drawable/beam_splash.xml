@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shown as the window background during cold start (pre-Android 12). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/beam_splash_background" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/beam_splash_logo" />
+    </item>
+</layer-list>
