@@ -1,9 +1,13 @@
 /**
  * Desktop -> phone over Wi-Fi: find phones running Beam's receiver and upload
- * to them. Mirrors the discovery the mobile app does (a /24 sweep of /info),
- * so no mDNS dependency on any platform.
+ * to them. Discovery is a /24 sweep of /info, so there's no mDNS dependency on
+ * any platform -- but the sweep is done in two passes so it doesn't feel like
+ * one: addresses we already have a reason to care about (a phone we've used
+ * before, anything in the ARP table) are probed first and usually answer in
+ * well under a second.
  */
 
+const { execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -46,38 +50,95 @@ async function probe(ip, port, timeoutMs = 700) {
   }
 }
 
-/** Find phones (8791) on every local subnet. Skips this machine's own port. */
-async function scanForPhones() {
+/**
+ * Addresses this Mac has recently exchanged packets with. On a home network
+ * that's a handful of hosts, and the phone is almost always one of them --
+ * which is what makes the first pass fast. Absolute path: a bundled app
+ * launched from Finder has a minimal PATH.
+ */
+function arpNeighbours() {
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/arp', ['-an'], { timeout: 2000 }, (err, stdout) => {
+      if (err) return resolve([]);
+      const ips = new Set();
+      for (const m of String(stdout).matchAll(/\((\d+\.\d+\.\d+\.\d+)\)/g)) {
+        ips.add(m[1]);
+      }
+      resolve([...ips]);
+    });
+  });
+}
+
+async function sweep(ips, port, timeoutMs, concurrency, collect) {
+  let next = 0;
+  async function worker() {
+    while (next < ips.length) {
+      const device = await probe(ips[next++], port, timeoutMs);
+      if (device) collect(device);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, ips.length) || 1 }, worker)
+  );
+}
+
+/**
+ * Find phones (8791) on every local subnet, calling onFound as each one
+ * answers so the UI can fill in before the sweep finishes. `hints` are
+ * addresses to try first -- typically the last-known IPs of known devices.
+ */
+async function scanForPhones({ hints = [], onFound = () => {} } = {}) {
   const subnets = localSubnets();
   if (!subnets.length) return { devices: [], error: 'not-on-network' };
 
-  const targets = [];
+  const mine = new Set(subnets.map((n) => n.ip));
+  const local = (ip) => subnets.some((n) => ip.startsWith(`${n.prefix}.`));
+
+  const first = [...new Set([...hints, ...(await arpNeighbours())])].filter(
+    (ip) => local(ip) && !mine.has(ip)
+  );
+  const firstSet = new Set(first);
+  const rest = [];
   for (const net of subnets) {
     for (let i = 1; i <= 254; i++) {
       const ip = `${net.prefix}.${i}`;
-      if (ip === net.ip) continue;
-      targets.push({ ip, port: PHONE_PORT });
+      if (!mine.has(ip) && !firstSet.has(ip)) rest.push(ip);
     }
   }
 
   const found = [];
   const seen = new Set();
-  let next = 0;
-  const CONCURRENCY = 64;
+  const collect = (device) => {
+    const key = `${device.ip}:${device.port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    found.push(device);
+    onFound(device);
+  };
 
-  async function worker() {
-    while (next < targets.length) {
-      const t = targets[next++];
-      const device = await probe(t.ip, t.port);
-      const key = device && `${device.ip}:${device.port}`;
-      if (device && !seen.has(key)) {
-        seen.add(key);
-        found.push(device);
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  // Known hosts get a generous timeout; the blind sweep gets a short one,
+  // because an address that isn't answering isn't going to start.
+  await sweep(first, PHONE_PORT, 1200, 32, collect);
+  await sweep(rest, PHONE_PORT, 400, 64, collect);
   return { devices: found, error: null };
+}
+
+/**
+ * Add a device by address, for when discovery can't see it -- guest Wi-Fi with
+ * client isolation, a /16, two subnets bridged by a router. Tries the phone
+ * port first, then the laptop one.
+ */
+async function connectTo(address) {
+  const [host, explicitPort] = String(address).trim().split(':');
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return { device: null, error: 'That does not look like an IP address.' };
+  }
+  const ports = explicitPort ? [Number(explicitPort)] : [PHONE_PORT, LAPTOP_PORT];
+  for (const port of ports) {
+    const device = await probe(host, port, 2500);
+    if (device) return { device, error: null };
+  }
+  return { device: null, error: `Nothing running Beam answered at ${host}.` };
 }
 
 /**
@@ -107,16 +168,39 @@ function deviceId(userDataDir) {
  * Resolves to a token, or null if the receiver is too old to support offers
  * (in which case it will prompt its user when the upload arrives instead).
  */
-async function requestApproval(device, localPaths, userDataDir, onEvent) {
-  const files = localPaths.map((p) => {
-    let size = null;
+/**
+ * Dropping a folder should send what's in it, so directories are walked into
+ * their files. Names keep the relative path ("holiday/day1.jpg") -- receivers
+ * flatten it, but it keeps the file list readable in the approval prompt.
+ */
+function statSize(p) {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return null;
+  }
+}
+
+function expandPaths(localPaths) {
+  const files = [];
+  const walk = (target, prefix) => {
+    let st;
     try {
-      size = fs.statSync(p).size;
+      st = fs.statSync(target);
     } catch {
-      /* unreadable size is not fatal */
+      return;
     }
-    return { name: path.basename(p), size };
-  });
+    if (!st.isDirectory()) return files.push({ path: target, name: prefix });
+    for (const child of fs.readdirSync(target)) {
+      walk(path.join(target, child), `${prefix}/${child}`);
+    }
+  };
+  for (const p of localPaths) walk(p, path.basename(p));
+  return files;
+}
+
+async function requestApproval(device, entries, userDataDir, onEvent) {
+  const files = entries.map((e) => ({ name: e.name, size: e.size }));
 
   let offer;
   try {
@@ -171,20 +255,30 @@ async function fileBlob(filePath) {
  * Upload local files to a phone's Beam receiver.
  * onEvent gets {type:'start'|'done'|'error', name, index, total}.
  */
+/**
+ * Send files (and the contents of any dropped folders) to one device.
+ * Returns what made it and what didn't, so the UI can offer a retry of just
+ * the failures instead of the whole batch.
+ */
 async function sendFiles(device, localPaths, onEvent, userDataDir) {
+  const entries = expandPaths(localPaths).map((e) => ({
+    ...e,
+    size: statSize(e.path),
+  }));
+  const totalBytes = entries.reduce((sum, e) => sum + (e.size || 0), 0);
+
   const sent = [];
+  const failed = [];
   const token = userDataDir
-    ? await requestApproval(device, localPaths, userDataDir, onEvent)
+    ? await requestApproval(device, entries, userDataDir, onEvent)
     : null;
   const query = token ? `&token=${encodeURIComponent(token)}` : '';
-  for (let i = 0; i < localPaths.length; i++) {
-    const local = localPaths[i];
-    const name = path.basename(local);
-    onEvent({ type: 'start', name, index: i, total: localPaths.length });
+  let doneBytes = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    const { path: local, name, size } = entries[i];
+    onEvent({ type: 'start', name, index: i, total: entries.length });
     try {
-      if (fs.statSync(local).isDirectory()) {
-        throw new Error('Folders are not supported yet — drop individual files.');
-      }
       const form = new FormData();
       form.append(`file${i}`, await fileBlob(local), name);
 
@@ -197,12 +291,27 @@ async function sendFiles(device, localPaths, onEvent, userDataDir) {
       if (res.status === 403) throw new Error('The other device declined the transfer');
       if (!res.ok) throw new Error(`Phone returned ${res.status}`);
       sent.push(name);
-      onEvent({ type: 'done', name, index: i });
+      doneBytes += size || 0;
+      onEvent({
+        type: 'done',
+        name,
+        index: i,
+        size,
+        pct: totalBytes ? (doneBytes / totalBytes) * 100 : null,
+      });
     } catch (e) {
+      failed.push({ path: local, name, message: e.message });
       onEvent({ type: 'error', name, message: e.message, index: i });
     }
   }
-  return sent;
+  return { sent, failed };
 }
 
-module.exports = { scanForPhones, sendFiles, deviceId, LAPTOP_PORT, PHONE_PORT };
+module.exports = {
+  scanForPhones,
+  connectTo,
+  sendFiles,
+  deviceId,
+  LAPTOP_PORT,
+  PHONE_PORT,
+};

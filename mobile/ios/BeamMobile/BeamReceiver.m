@@ -159,6 +159,27 @@ RCT_EXPORT_MODULE(BeamReceiver);
   });
 }
 
+/**
+ * A tiny string store, so the JS side can keep its own lists (devices we've
+ * seen, transfers we've made) without adding an async-storage dependency for
+ * two small JSON blobs.
+ */
+RCT_EXPORT_METHOD(getStore:(NSString *)key
+                   resolve:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject) {
+  NSString *full = [@"BeamStore:" stringByAppendingString:key];
+  resolve([NSUserDefaults.standardUserDefaults stringForKey:full] ?: [NSNull null]);
+}
+
+RCT_EXPORT_METHOD(setStore:(NSString *)key
+                     value:(NSString *)value
+                   resolve:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject) {
+  NSString *full = [@"BeamStore:" stringByAppendingString:key];
+  [NSUserDefaults.standardUserDefaults setObject:value forKey:full];
+  resolve(@YES);
+}
+
 RCT_EXPORT_METHOD(respondToOffer:(NSString *)offerId
                         accepted:(BOOL)accepted
                            trust:(BOOL)trust
@@ -264,7 +285,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
       @"app" : @"beam",
       @"name" : self ? [self deviceName] : @"iPhone",
       @"platform" : @"ios",
-      @"version" : @"0.2.0",
+      @"version" : @"0.3.0",
       @"features" : @[ @"offer" ],
     }];
   }];

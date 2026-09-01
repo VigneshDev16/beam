@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('beam', {
   onApprovalPending: (cb) => ipcRenderer.on('approval:pending', (_e, d) => cb(d)),
   onApprovalResolved: (cb) => ipcRenderer.on('approval:resolved', (_e, d) => cb(d)),
   onApprovalAuto: (cb) => ipcRenderer.on('approval:auto', (_e, d) => cb(d)),
+  history: () => ipcRenderer.invoke('history:list'),
+  clearHistory: () => ipcRenderer.invoke('history:clear'),
 });
 
 contextBridge.exposeInMainWorld('cable', {
@@ -36,6 +38,10 @@ contextBridge.exposeInMainWorld('cable', {
 
 contextBridge.exposeInMainWorld('wifi', {
   scan: () => ipcRenderer.invoke('wifi:scan'),
+  connect: (address) => ipcRenderer.invoke('wifi:connect', address),
+  known: () => ipcRenderer.invoke('wifi:known'),
+  forget: (key) => ipcRenderer.invoke('wifi:forget', key),
+  onFound: (cb) => ipcRenderer.on('wifi:found', (_e, d) => cb(d)),
   send: (device, localPaths) => ipcRenderer.invoke('wifi:send', device, localPaths),
   onProgress: (cb) => ipcRenderer.on('wifi:progress', (_e, d) => cb(d)),
 });

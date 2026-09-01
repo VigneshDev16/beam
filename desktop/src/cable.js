@@ -496,9 +496,8 @@ async function pushFiles(device, localPaths, remoteDir, onEvent) {
     const name = path.basename(local);
     onEvent({ type: 'start', name, index: i, total: localPaths.length });
     try {
-      if (fs.statSync(local).isDirectory()) {
-        throw new Error('Folders are not supported yet — drop individual files.');
-      }
+      // adb push copies a directory recursively and creates it on the phone,
+      // so a dropped folder needs no special handling here.
       const remote = path.posix.join(remoteDir, name);
       await adbPush(adb, device.id, local, remote, (pct) =>
         onEvent({ type: 'progress', name, pct, index: i })

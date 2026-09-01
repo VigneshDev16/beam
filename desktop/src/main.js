@@ -14,6 +14,7 @@ const Busboy = require('busboy');
 const cable = require('./cable');
 const wifiSend = require('./wifi-send');
 const approval = require('./approval');
+const known = require('./known');
 const { version: APP_VERSION } = require('../package.json');
 
 const PORT = 8790;
@@ -67,12 +68,27 @@ function handleUpload(req, res, sender) {
   bb.on('file', (_field, fileStream, info) => {
     const filename = path.basename(info.filename || 'unnamed');
     const dest = uniquePath(SAVE_DIR, filename);
-    savedFiles.push({ name: path.basename(dest), path: dest });
+    // Count as we go: at 'close' the file is still being flushed to disk, so
+    // stat'ing it there reports zero.
+    const entry = { name: path.basename(dest), path: dest, size: 0 };
+    savedFiles.push(entry);
+    fileStream.on('data', (chunk) => {
+      entry.size += chunk.length;
+    });
     send('transfer:start', { id, sender, filename: path.basename(dest), totalBytes });
     fileStream.pipe(fs.createWriteStream(dest));
   });
 
   bb.on('close', () => {
+    for (const f of savedFiles) {
+      known.record(app.getPath('userData'), {
+        direction: 'received',
+        name: f.name,
+        size: f.size,
+        peer: sender,
+        path: f.path,
+      });
+    }
     send('transfer:done', { id, sender, files: savedFiles });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, saved: savedFiles.map((f) => f.name) }));
@@ -297,13 +313,15 @@ ipcMain.handle('local:listDir', async (_e, dirPath) => {
   const entries = fs.readdirSync(target, { withFileTypes: true }).map((d) => {
     const full = path.join(target, d.name);
     let size = null;
+    let mtime = null;
     try {
       const st = fs.statSync(full);
       size = d.isDirectory() ? null : st.size;
+      mtime = st.mtimeMs;
     } catch {
       /* unreadable entry: show it with no size */
     }
-    return { name: d.name, path: full, isDir: d.isDirectory(), size };
+    return { name: d.name, path: full, isDir: d.isDirectory(), size, mtime };
   });
   entries.sort((a, b) =>
     a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1
@@ -402,19 +420,63 @@ ipcMain.handle('cable:delete', async (_e, device, items) => {
 });
 
 ipcMain.handle('wifi:scan', async () => {
+  const dir = app.getPath('userData');
   try {
-    return await wifiSend.scanForPhones();
+    return await wifiSend.scanForPhones({
+      hints: known.known(dir).map((d) => d.ip),
+      // Stream them: the first pass usually answers long before the sweep ends.
+      onFound: (device) => {
+        known.remember(dir, device);
+        send('wifi:found', device);
+      },
+    });
   } catch (e) {
     return { devices: [], error: e.message };
   }
 });
 
+ipcMain.handle('wifi:connect', async (_e, address) => {
+  const dir = app.getPath('userData');
+  try {
+    const result = await wifiSend.connectTo(address);
+    if (result.device) known.remember(dir, result.device);
+    return result;
+  } catch (e) {
+    return { device: null, error: e.message };
+  }
+});
+
+ipcMain.handle('wifi:known', () => known.known(app.getPath('userData')));
+
+ipcMain.handle('wifi:forget', (_e, key) => {
+  known.forget(app.getPath('userData'), key);
+  return known.known(app.getPath('userData'));
+});
+
+ipcMain.handle('history:list', () => known.history(app.getPath('userData')));
+
+ipcMain.handle('history:clear', () => {
+  known.clearHistory(app.getPath('userData'));
+  return [];
+});
+
 ipcMain.handle('wifi:send', async (_e, device, localPaths) => {
+  const dir = app.getPath('userData');
   return wifiSend.sendFiles(
     device,
     localPaths,
-    (ev) => send('wifi:progress', ev),
-    app.getPath('userData')
+    (ev) => {
+      if (ev.type === 'done') {
+        known.record(dir, {
+          direction: 'sent',
+          name: ev.name,
+          size: ev.size ?? null,
+          peer: device.name,
+        });
+      }
+      send('wifi:progress', ev);
+    },
+    dir
   );
 });
 

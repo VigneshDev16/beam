@@ -3,11 +3,14 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  PermissionsAndroid,
+  Platform,
   Pressable,
   StatusBar,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {
@@ -20,8 +23,18 @@ import {
   deviceKey,
   getWifiIp,
   isPhone,
+  probeAddress,
   scanForDevices,
 } from './src/discovery';
+import {
+  HistoryEntry,
+  KnownDevice,
+  clearHistory,
+  history,
+  knownDevices,
+  recordTransfer,
+  rememberDevice,
+} from './src/store';
 import {
   ApprovalRequest,
   ReceivedFile,
@@ -33,11 +46,14 @@ import {
 } from './src/receiver';
 import { PickedFile, requestApproval, uploadFiles } from './src/upload';
 
+type Failure = { file: PickedFile; message: string };
+
 type SendState =
   | { phase: 'idle' }
   | { phase: 'waiting'; code: string }
-  | { phase: 'sending'; pct: number }
+  | { phase: 'sending'; pct: number; name: string; index: number; total: number }
   | { phase: 'done'; count: number }
+  | { phase: 'partial'; sent: number; failed: Failure[] }
   | { phase: 'error'; message: string };
 
 function fmtBytes(n: number | null): string {
@@ -45,6 +61,17 @@ function fmtBytes(n: number | null): string {
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+/** "3m ago" / "yesterday" — enough to tell stale from current. */
+function ago(ts: number): string {
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
 }
 
 function BeamApp() {
@@ -59,6 +86,11 @@ function BeamApp() {
   const [received, setReceived] = useState<ReceivedFile[]>([]);
   const [incoming, setIncoming] = useState<ApprovalRequest | null>(null);
   const [trustSender, setTrustSender] = useState(false);
+  const [remembered, setRemembered] = useState<KnownDevice[]>([]);
+  const [ipPrompt, setIpPrompt] = useState(false);
+  const [ipInput, setIpInput] = useState('');
+  const [ipError, setIpError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<HistoryEntry[] | null>(null);
   const scanRunning = useRef(false);
 
   const runScan = useCallback(async () => {
@@ -68,12 +100,16 @@ function BeamApp() {
     setScanError(null);
     setDevices([]);
     try {
+      const known = await knownDevices();
+      setRemembered(known);
       await scanForDevices((d) => {
         setDevices((prev) =>
           prev.some((p) => deviceKey(p) === deviceKey(d)) ? prev : [...prev, d],
         );
         setSelectedKey((cur) => cur ?? deviceKey(d));
-      });
+        rememberDevice(d);
+      }, known.map((k) => k.ip));
+      setRemembered(await knownDevices());
     } catch (e: any) {
       setScanError(
         e?.message === 'not-on-wifi'
@@ -90,10 +126,31 @@ function BeamApp() {
     runScan();
   }, [runScan]);
 
+  /** Ask one address directly, and select it if something answers. */
+  const addByAddress = useCallback(async (address: string) => {
+    const { device, error } = await probeAddress(address);
+    if (!device) return error;
+    await rememberDevice(device);
+    setDevices((prev) =>
+      prev.some((p) => deviceKey(p) === deviceKey(device)) ? prev : [...prev, device],
+    );
+    setSelectedKey(deviceKey(device));
+    setRemembered(await knownDevices());
+    return null;
+  }, []);
+
+  const openRecent = useCallback(async () => setRecent(await history()), []);
+
   useEffect(() => {
     if (!receiving) return;
     const unsubscribe = onFileReceived((f) => {
       setReceived((prev) => [f, ...prev]);
+      recordTransfer({
+        direction: 'received',
+        name: f.name,
+        size: null,
+        peer: f.sender,
+      });
     });
     return unsubscribe;
   }, [receiving]);
@@ -126,6 +183,13 @@ function BeamApp() {
   const toggleReceive = useCallback(async (on: boolean) => {
     try {
       if (on) {
+        // Android 13+ won't show the "ready to receive" notification, or tell
+        // you a file arrived, without this. Declining is not fatal.
+        if (Platform.OS === 'android' && Number(Platform.Version) >= 33) {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+          );
+        }
         const info = await startReceiver();
         const ip = await getWifiIp();
         setReceiverLabel(`Visible as “${info.name}” (${ip ?? '?'})`);
@@ -164,30 +228,52 @@ function BeamApp() {
     }
   }, []);
 
-  const doSend = useCallback(async () => {
-    const target = devices.find((d) => deviceKey(d) === selectedKey);
-    if (!target || files.length === 0) return;
-    setSend({ phase: 'sending', pct: 0 });
-    try {
-      const token = await requestApproval(target, files, (code) =>
-        setSend({ phase: 'waiting', code }),
-      );
-      setSend({ phase: 'sending', pct: 0 });
-      await uploadFiles(
-        target,
-        files,
-        (p) => {
-          const pct = p.totalBytes > 0 ? (p.sentBytes / p.totalBytes) * 100 : 0;
-          setSend({ phase: 'sending', pct });
-        },
-        token,
-      );
-      setSend({ phase: 'done', count: files.length });
-      setFiles([]);
-    } catch (e: any) {
-      setSend({ phase: 'error', message: e?.message ?? 'Upload failed' });
-    }
-  }, [devices, selectedKey, files]);
+  const sendList = useCallback(
+    async (list: PickedFile[]) => {
+      const target = devices.find((d) => deviceKey(d) === selectedKey);
+      if (!target || list.length === 0) return;
+      setSend({ phase: 'sending', pct: 0, name: list[0].name, index: 0, total: list.length });
+      try {
+        const token = await requestApproval(target, list, (code) =>
+          setSend({ phase: 'waiting', code }),
+        );
+        const { sent, failed } = await uploadFiles(
+          target,
+          list,
+          (p) =>
+            setSend({
+              phase: 'sending',
+              pct: p.pct,
+              name: p.name,
+              index: p.index,
+              total: list.length,
+            }),
+          token,
+        );
+        for (const f of sent) {
+          await recordTransfer({
+            direction: 'sent',
+            name: f.name,
+            size: f.size,
+            peer: target.name,
+          });
+        }
+        if (failed.length) {
+          // Keep the failures selected so Retry has something to send.
+          setFiles(failed.map((f) => f.file));
+          setSend({ phase: 'partial', sent: sent.length, failed });
+        } else {
+          setFiles([]);
+          setSend({ phase: 'done', count: sent.length });
+        }
+      } catch (e: any) {
+        setSend({ phase: 'error', message: e?.message ?? 'Upload failed' });
+      }
+    },
+    [devices, selectedKey],
+  );
+
+  const doSend = useCallback(() => sendList(files), [sendList, files]);
 
   const sending = send.phase === 'sending' || send.phase === 'waiting';
   const canSend = !!selectedKey && files.length > 0 && !sending;
@@ -201,19 +287,33 @@ function BeamApp() {
       <View style={s.card}>
         <View style={s.rowBetween}>
           <Text style={s.label}>SEND TO</Text>
-          {scanning ? (
-            <ActivityIndicator size="small" color="#6d93ff" />
-          ) : (
-            <Pressable onPress={runScan} disabled={sending}>
-              <Text style={s.linkBtn}>Rescan</Text>
+          <View style={s.headerActions}>
+            <Pressable
+              onPress={() => {
+                setIpError(null);
+                setIpInput('');
+                setIpPrompt(true);
+              }}
+              disabled={sending}
+            >
+              <Text style={s.linkBtn}>By IP</Text>
             </Pressable>
-          )}
+            {scanning ? (
+              <ActivityIndicator size="small" color="#6d93ff" />
+            ) : (
+              <Pressable onPress={runScan} disabled={sending}>
+                <Text style={s.linkBtn}>Rescan</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
         {scanError ? <Text style={s.error}>{scanError}</Text> : null}
         {!scanError && devices.length === 0 ? (
           <Text style={s.muted}>
             {scanning
               ? 'Scanning your network…'
+              : remembered.length
+              ? 'Nothing answered. Tap a device below to try its last address.'
               : 'No devices found. Open Beam on the other device.'}
           </Text>
         ) : null}
@@ -230,6 +330,27 @@ function BeamApp() {
             <Text style={s.deviceIp}>{d.ip}</Text>
           </Pressable>
         ))}
+        {/* Devices we've used before that haven't answered yet. Tapping one
+            asks its last address directly, which beats another full sweep. */}
+        {remembered
+          .filter(
+            (k) =>
+              !devices.some((d) => d.name.toLowerCase() === k.name.toLowerCase()),
+          )
+          .map((k) => (
+            <Pressable
+              key={k.key}
+              style={[s.device, s.deviceAsleep]}
+              onPress={async () => {
+                const error = await addByAddress(`${k.ip}:${k.port}`);
+                if (error) runScan();
+              }}
+              disabled={sending}
+            >
+              <Text style={s.deviceName}>💤 {k.name}</Text>
+              <Text style={s.deviceIp}>Last seen {ago(k.lastSeen)}</Text>
+            </Pressable>
+          ))}
       </View>
 
       <View style={[s.card, s.grow]}>
@@ -269,7 +390,12 @@ function BeamApp() {
       <View style={s.card}>
         <View style={s.rowBetween}>
           <View style={{ flex: 1 }}>
-            <Text style={s.label}>RECEIVE FILES</Text>
+            <View style={s.rowStart}>
+              <Text style={s.label}>RECEIVE FILES</Text>
+              <Pressable onPress={openRecent}>
+                <Text style={s.linkBtnSmall}>Recent</Text>
+              </Pressable>
+            </View>
             <Text
               style={receiving || !receiverLabel ? s.muted : s.error}
               numberOfLines={2}
@@ -297,8 +423,24 @@ function BeamApp() {
         </Text>
       )}
       {send.phase === 'sending' && (
-        <View style={s.progressWrap}>
-          <View style={[s.progressBar, { width: `${send.pct}%` }]} />
+        <>
+          <Text style={s.muted} numberOfLines={1}>
+            {send.name} — {send.index + 1} of {send.total}
+          </Text>
+          <View style={s.progressWrap}>
+            <View style={[s.progressBar, { width: `${send.pct}%` }]} />
+          </View>
+        </>
+      )}
+      {send.phase === 'partial' && (
+        <View style={s.partial}>
+          <Text style={s.error} numberOfLines={2}>
+            Sent {send.sent}, {send.failed.length} failed —{' '}
+            {send.failed[0].message}
+          </Text>
+          <Pressable onPress={() => sendList(send.failed.map((f) => f.file))}>
+            <Text style={s.linkBtn}>Retry {send.failed.length}</Text>
+          </Pressable>
         </View>
       )}
       {send.phase === 'done' && (
@@ -307,6 +449,109 @@ function BeamApp() {
         </Text>
       )}
       {send.phase === 'error' && <Text style={s.error}>{send.message}</Text>}
+
+      <Modal
+        visible={ipPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIpPrompt(false)}
+      >
+        <View style={s.backdrop}>
+          <View style={s.sheet}>
+            <Text style={s.sheetTitle}>Connect by IP</Text>
+            <Text style={s.codeHint}>
+              For when the scan can't see the other device — guest Wi-Fi, or a
+              network that blocks device-to-device traffic. The address is on
+              the other device's Beam window.
+            </Text>
+            <TextInput
+              style={s.input}
+              value={ipInput}
+              onChangeText={setIpInput}
+              placeholder="192.168.0.9"
+              placeholderTextColor="#6b7280"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="numbers-and-punctuation"
+            />
+            {ipError ? <Text style={s.error}>{ipError}</Text> : null}
+            <View style={s.sheetBtns}>
+              <Pressable
+                style={[s.sheetBtn, s.declineBtn]}
+                onPress={() => setIpPrompt(false)}
+              >
+                <Text style={s.declineText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[s.sheetBtn, s.acceptBtn]}
+                onPress={async () => {
+                  const error = await addByAddress(ipInput);
+                  if (error) setIpError(error);
+                  else setIpPrompt(false);
+                }}
+              >
+                <Text style={s.acceptText}>Connect</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={recent !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRecent(null)}
+      >
+        <View style={s.backdrop}>
+          <View style={s.sheet}>
+            <Text style={s.sheetTitle}>Recent transfers</Text>
+            {recent && recent.length === 0 ? (
+              <Text style={s.codeHint}>
+                Nothing yet. Files you send or receive show up here.
+              </Text>
+            ) : null}
+            <FlatList
+              style={s.recentList}
+              data={recent ?? []}
+              keyExtractor={(item, i) => `${item.at}-${i}`}
+              renderItem={({ item }) => (
+                <View style={s.recentRow}>
+                  <Text
+                    style={item.direction === 'sent' ? s.arrowOut : s.arrowIn}
+                  >
+                    {item.direction === 'sent' ? '↑' : '↓'}
+                  </Text>
+                  <Text style={s.recentName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={s.recentMeta}>
+                    {item.direction === 'sent' ? 'to' : 'from'} {item.peer} ·{' '}
+                    {ago(item.at)}
+                  </Text>
+                </View>
+              )}
+            />
+            <View style={s.sheetBtns}>
+              <Pressable
+                style={[s.sheetBtn, s.declineBtn]}
+                onPress={async () => {
+                  await clearHistory();
+                  setRecent([]);
+                }}
+              >
+                <Text style={s.declineText}>Clear</Text>
+              </Pressable>
+              <Pressable
+                style={[s.sheetBtn, s.acceptBtn]}
+                onPress={() => setRecent(null)}
+              >
+                <Text style={s.acceptText}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!incoming}
@@ -420,8 +665,11 @@ const s = StyleSheet.create({
     marginBottom: 6,
     gap: 10,
   },
+  rowStart: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   label: { color: '#9aa3af', fontSize: 11, letterSpacing: 1, marginBottom: 4 },
   linkBtn: { color: '#6d93ff', fontSize: 13, fontWeight: '600' },
+  linkBtnSmall: { color: '#6d93ff', fontSize: 12, fontWeight: '600', marginBottom: 4 },
   muted: { color: '#788088', fontSize: 13, paddingVertical: 2 },
   error: { color: '#ff7a7f', fontSize: 13, paddingVertical: 6 },
   success: {
@@ -438,6 +686,7 @@ const s = StyleSheet.create({
     marginTop: 8,
   },
   deviceSelected: { borderColor: '#6d93ff', backgroundColor: '#20283c' },
+  deviceAsleep: { borderStyle: 'dashed', opacity: 0.65 },
   deviceName: { color: '#eceff3', fontSize: 15, fontWeight: '600' },
   deviceIp: { color: '#788088', fontSize: 12, marginTop: 2 },
   fileRow: {
@@ -464,6 +713,13 @@ const s = StyleSheet.create({
     color: '#4cc27a',
     fontSize: 13,
     paddingTop: 6,
+  },
+  partial: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 8,
   },
   progressWrap: {
     height: 6,
@@ -521,6 +777,30 @@ const s = StyleSheet.create({
     marginTop: 20,
   },
   trustLabel: { color: '#dde2e8', fontSize: 14 },
+  input: {
+    borderWidth: 1,
+    borderColor: '#2c313a',
+    borderRadius: 10,
+    color: '#eceff3',
+    backgroundColor: '#111318',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginTop: 12,
+  },
+  recentList: { maxHeight: 280, marginTop: 6 },
+  recentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#2c313a',
+    gap: 8,
+  },
+  arrowIn: { color: '#4cc27a', fontSize: 14, width: 14 },
+  arrowOut: { color: '#6d93ff', fontSize: 14, width: 14 },
+  recentName: { color: '#dde2e8', fontSize: 14, flex: 1 },
+  recentMeta: { color: '#788088', fontSize: 11.5 },
   sheetBtns: { flexDirection: 'row', gap: 12, marginTop: 24 },
   sheetBtn: { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   declineBtn: { borderWidth: 1, borderColor: '#2c313a' },

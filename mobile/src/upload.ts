@@ -10,8 +10,12 @@ export interface PickedFile {
 }
 
 export interface UploadProgress {
+  /** Which file in the batch, and how far the batch as a whole has got. */
+  index: number;
+  name: string;
   sentBytes: number;
   totalBytes: number;
+  pct: number;
 }
 
 const SENDER_NAME = Platform.OS === 'android' ? 'Android Phone' : 'iPhone';
@@ -70,23 +74,27 @@ export async function requestApproval(
   throw new Error(`${target.name} did not respond`);
 }
 
-export function uploadFiles(
+export interface UploadResult {
+  sent: PickedFile[];
+  failed: { file: PickedFile; message: string }[];
+}
+
+function uploadOne(
   target: BeamDevice,
-  files: PickedFile[],
-  onProgress: (p: UploadProgress) => void,
-  token?: string | null,
+  file: PickedFile,
+  field: string,
+  token: string | null | undefined,
+  onBytes: (loaded: number, total: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     // Unique field name per file — NanoHTTPD on Android receivers needs
     // distinct keys to keep every file.
-    files.forEach((f, i) => {
-      form.append(`file${i}`, {
-        uri: f.uri,
-        name: f.name,
-        type: f.type || 'application/octet-stream',
-      } as any);
-    });
+    form.append(field, {
+      uri: file.uri,
+      name: file.name,
+      type: file.type || 'application/octet-stream',
+    } as any);
 
     const query = token ? `&token=${encodeURIComponent(token)}` : '';
     const xhr = new XMLHttpRequest();
@@ -98,9 +106,7 @@ export function uploadFiles(
     );
     xhr.timeout = 10 * 60 * 1000;
 
-    xhr.upload.onprogress = (e) => {
-      onProgress({ sentBytes: e.loaded, totalBytes: e.total });
-    };
+    xhr.upload.onprogress = (e) => onBytes(e.loaded, e.total);
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else if (xhr.status === 403) reject(new Error('The other device declined'));
@@ -111,4 +117,47 @@ export function uploadFiles(
 
     xhr.send(form);
   });
+}
+
+/**
+ * One request per file. A batch used to be a single upload, which meant one
+ * dropped connection lost all of it and there was no way to retry just the
+ * part that failed. The approval token is good for as many uploads as the
+ * offer declared files, so this stays within what the receiver granted.
+ */
+export async function uploadFiles(
+  target: BeamDevice,
+  files: PickedFile[],
+  onProgress: (p: UploadProgress) => void,
+  token?: string | null,
+): Promise<UploadResult> {
+  const sent: PickedFile[] = [];
+  const failed: UploadResult['failed'] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    try {
+      await uploadOne(target, file, `file${i}`, token, (loaded, total) => {
+        const share = total > 0 ? loaded / total : 0;
+        onProgress({
+          index: i,
+          name: file.name,
+          sentBytes: loaded,
+          totalBytes: total,
+          pct: ((i + share) / files.length) * 100,
+        });
+      });
+      sent.push(file);
+      onProgress({
+        index: i,
+        name: file.name,
+        sentBytes: file.size ?? 0,
+        totalBytes: file.size ?? 0,
+        pct: ((i + 1) / files.length) * 100,
+      });
+    } catch (e: any) {
+      failed.push({ file, message: e?.message ?? 'Upload failed' });
+    }
+  }
+  return { sent, failed };
 }

@@ -38,7 +38,8 @@ by a cable, that should work too.
 | 📶 **Wi-Fi transfer, both directions** | Phone → laptop and laptop → phone, over your local network. Devices find each other automatically. |
 | 🔌 **USB cable mode** | Browse a connected Android like a drive and copy files either way. |
 | 🗂 **Manage the phone's files** | Create folders, rename, move, delete — from your laptop. |
-| 🖱 **Real drag and drop** | Drag files out of the phone into Finder; drag files from Finder onto the phone. |
+| 🖱 **Real drag and drop** | Drag files out of the phone into Finder; drag files — or whole folders — from Finder onto the phone. |
+| ⏱ **Remembers your devices** | A device you've used before comes back in about a second, and there's a history of what you've sent and received. |
 | 🍎 **Works with iPhone too** | Over Wi-Fi. iOS gives no USB file access to anyone, so cable mode is Android-only. |
 | 🔒 **Nothing leaves your network** | No server, no account, no telemetry. |
 
@@ -235,6 +236,25 @@ who turns on USB debugging.
 > precisely. "No files found" is a bug report; "macOS is holding this phone —
 > here's the alternative" is a product.
 
+## Finding each other
+
+Discovery asks every address on your subnet whether it's running Beam. It's
+blunt, and it works on networks where mDNS quietly doesn't — mesh routers that
+don't forward multicast, guest Wi-Fi, corporate APs.
+
+Blunt used to also mean slow, so the sweep runs in two passes. Addresses there's
+already a reason to care about go first — a device you've used before, plus
+everything in this machine's ARP table — with a generous timeout. The blind
+sweep of the rest follows with a short one. Devices appear as they answer
+rather than when the sweep finishes.
+
+Two escape hatches for when that isn't enough:
+
+- **Devices you've used before** are listed straight away, greyed out. Tapping
+  one asks its last address directly instead of waiting for another sweep.
+- **Connect by IP** — the `+` button on the desktop, **By IP** on the phone.
+  The address is on the other device's screen.
+
 ## Honest limitations
 
 - **Transfers are approved, but not yet encrypted.** Nothing is written to disk
@@ -243,9 +263,13 @@ who turns on USB debugging.
   impersonate a device you have trusted. TLS is next.
 - **Cable features need USB debugging**; MTP is read-only and blocked on macOS.
 - **iPhones can't use USB at all** — Apple exposes no MTP or filesystem there.
-- **Individual files only**; dragging whole folders isn't supported yet.
 - **The Mac build is unsigned**, and only Apple Silicon is built today.
-- iOS keeps its receiver running only while the app is in the foreground.
+- **iOS keeps its receiver running only while the app is in the foreground.**
+  Android now runs a foreground service, so it keeps listening in the
+  background; iOS gives no equivalent to a third-party app.
+- **Discovery is a subnet sweep, not mDNS.** It works on networks where mDNS
+  doesn't, but a network that blocks device-to-device traffic entirely will
+  still find nothing — that's what **Connect by IP** is for.
 
 ## What's verified
 
@@ -260,13 +284,23 @@ success message:
 | Mac → iPhone (Wi-Fi) | ✅ checksum matched |
 | Mac ↔ Galaxy S23 (cable) | ✅ both directions, checksums matched |
 | Phone file operations | ✅ on a physical Galaxy S23 |
+| Approval: accept, decline, token reuse, trust | ✅ Mac, physical Galaxy S23, iPhone simulator |
+| Folder drag → phone, and remembered devices | ✅ Mac → iPhone simulator, folder expanded to 5 files under one approval |
+
+The Android foreground service and its notifications are built and installed in
+the release APK but were last exercised on a simulator-free build — they want a
+run on a physical phone before I'd call them verified.
 
 ## Roadmap
 
 - [x] Receiver approval prompt + verification code — Mac, Android and iOS
+- [x] Remembered devices, fast reconnect, and connect by IP
+- [x] Transfer history, retry for failed files, per-file progress
+- [x] Folder drag-and-drop
+- [x] Background receiving on Android, with a notification when a file lands
+- [x] Search, sort and image thumbnails in the desktop explorer
 - [ ] TLS for transfers
 - [ ] Copy/duplicate on the phone, and undo
-- [ ] Folder drag-and-drop
 - [ ] Code-signed and notarised Mac build, Windows and Linux builds
 
 ---

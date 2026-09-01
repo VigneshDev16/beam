@@ -174,6 +174,13 @@ class BeamReceiverModule(private val ctx: ReactApplicationContext) :
         server = BeamServer()
         server!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
       }
+      // Best-effort: if the service can't start, the receiver still works for
+      // as long as the app is in the foreground.
+      try {
+        BeamService.start(ctx)
+      } catch (e: Exception) {
+        android.util.Log.w("Beam", "foreground service refused: " + e.message)
+      }
       val res = Arguments.createMap()
       res.putInt("port", PORT)
       res.putString("name", deviceName())
@@ -189,7 +196,28 @@ class BeamReceiverModule(private val ctx: ReactApplicationContext) :
     server?.stop()
     server = null
     offers.clear()
+    try {
+      BeamService.stop(ctx)
+    } catch (e: Exception) {
+      android.util.Log.w("Beam", "stopping service failed: " + e.message)
+    }
     promise.resolve(null)
+  }
+
+  /**
+   * A tiny string store, so the JS side can keep its own lists (devices we've
+   * seen, transfers we've made) without adding an async-storage dependency for
+   * two small JSON blobs.
+   */
+  @ReactMethod
+  fun getStore(key: String, promise: Promise) {
+    promise.resolve(prefs().getString("store:" + key, null))
+  }
+
+  @ReactMethod
+  fun setStore(key: String, value: String, promise: Promise) {
+    prefs().edit().putString("store:" + key, value).apply()
+    promise.resolve(true)
   }
 
   // Required no-ops for NativeEventEmitter
@@ -226,7 +254,7 @@ class BeamReceiverModule(private val ctx: ReactApplicationContext) :
             obj.put("app", "beam")
             obj.put("name", deviceName())
             obj.put("platform", "android")
-            obj.put("version", "0.2.0")
+            obj.put("version", "0.3.0")
             obj.put("features", JSONArray().put("offer"))
             json(Response.Status.OK, obj)
           }
@@ -346,6 +374,7 @@ class BeamReceiverModule(private val ctx: ReactApplicationContext) :
           ev.putString("uri", uri)
           ev.putString("sender", sender)
           emit("beamReceived", ev)
+          BeamService.notifyArrival(ctx, displayName, sender)
         }
       }
       return json(Response.Status.OK, JSONObject().put("ok", true))

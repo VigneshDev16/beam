@@ -2,9 +2,10 @@
  * Two-pane UI: devices on the left, an explorer on the right.
  *
  * The right pane renders one of three things depending on what is selected:
- *   mac  — the Beam folder on this Mac (browse + drag out)
- *   usb  — a cabled Android (full explorer: browse, transfer, manage)
- *   wifi — a phone on the network (send-only; phones expose no browse API)
+ *   mac    — the Beam folder on this Mac (browse + drag out)
+ *   usb    — a cabled Android (full explorer: browse, transfer, manage)
+ *   wifi   — a phone on the network (send-only; phones expose no browse API)
+ *   recent — what has been sent and received, newest first
  */
 
 const $ = (id) => document.getElementById(id);
@@ -26,8 +27,11 @@ const btnCut = $('op-cut');
 const btnPaste = $('op-paste');
 const btnDelete = $('op-delete');
 const btnCopy = $('op-copy');
+const searchEl = $('search');
+const sortKeyEl = $('sort-key');
+const sortDirEl = $('sort-dir');
 
-let selection = null; // {kind:'mac'|'usb'|'wifi', device?}
+let selection = null; // {kind:'mac'|'usb'|'wifi'|'recent', device?}
 let currentPath = null;
 let currentEntries = [];
 let localRoot = null;
@@ -36,8 +40,13 @@ const selected = new Map(); // path -> entry
 let clipboard = null; // {items, from}
 const dragReady = new Set();
 
+let filterText = '';
+let sortKey = localStorage.getItem('sortKey') || 'name';
+let sortAsc = localStorage.getItem('sortAsc') !== 'false';
+
 let usbDevices = [];
 let wifiDevices = [];
+let knownDevices = []; // seen before; shown greyed out until they answer
 
 const setStatus = (msg) => {
   statusEl.textContent = msg;
@@ -80,6 +89,15 @@ function renderSidebar() {
       onClick: selectMac,
     })
   );
+  sideMac.appendChild(
+    sidebarItem({
+      icon: '🕘',
+      name: 'Recent',
+      sub: 'Sent and received',
+      selected: selection?.kind === 'recent',
+      onClick: selectRecent,
+    })
+  );
 
   sideUsb.innerHTML = '';
   const usable = usbDevices.filter((d) => d.state === 'device');
@@ -105,7 +123,10 @@ function renderSidebar() {
   }
 
   sideWifi.innerHTML = '';
-  if (!wifiDevices.length) {
+  const liveNames = new Set(wifiDevices.map((d) => d.name.toLowerCase()));
+  const offline = knownDevices.filter((d) => !liveNames.has(d.name.toLowerCase()));
+
+  if (!wifiDevices.length && !offline.length) {
     sideWifi.innerHTML =
       '<div class="side-empty">No phones. Turn on "Receive files" in the phone app.</div>';
   }
@@ -120,6 +141,49 @@ function renderSidebar() {
       })
     );
   }
+  // Phones we've used before but that haven't answered yet. Clicking one asks
+  // its last address directly, which beats waiting out another sweep.
+  for (const d of offline) {
+    sideWifi.appendChild(
+      sidebarItem({
+        icon: '💤',
+        name: d.name,
+        sub: `Last seen ${ago(d.lastSeen)}`,
+        onClick: () => wake(d),
+      })
+    );
+  }
+}
+
+/** "3m ago" / "yesterday" — enough to tell stale from current. */
+function ago(ts) {
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
+}
+
+async function wake(device) {
+  setStatus(`Looking for ${device.name} at ${device.ip}…`);
+  const { device: found } = await wifi.connect(`${device.ip}:${device.port}`);
+  if (!found) {
+    setStatus(`${device.name} isn't at ${device.ip} any more — rescanning…`);
+    await refreshWifi();
+    return;
+  }
+  addWifiDevice(found);
+  setStatus(`${found.name} is at ${found.ip}`);
+  selectWifi(found);
+}
+
+function addWifiDevice(device) {
+  if (!wifiDevices.some((d) => d.ip === device.ip && d.port === device.port)) {
+    wifiDevices.push(device);
+  }
+  renderSidebar();
 }
 
 async function refreshUsb() {
@@ -135,10 +199,35 @@ async function refreshUsb() {
 }
 
 async function refreshWifi() {
-  sideWifi.innerHTML = '<div class="side-empty">Scanning…</div>';
-  const { devices } = await wifi.scan();
-  wifiDevices = devices;
+  knownDevices = await wifi.known();
+  wifiDevices = [];
   renderSidebar();
+  sideWifi.insertAdjacentHTML('beforeend', '<div class="side-empty">Scanning…</div>');
+  const { devices } = await wifi.scan(); // wifi.onFound fills the list as it goes
+  wifiDevices = devices;
+  knownDevices = await wifi.known();
+  renderSidebar();
+}
+
+async function connectByIp() {
+  const dialog = $('ip-dialog');
+  const input = $('ip-input');
+  const errorEl = $('ip-error');
+  errorEl.textContent = '';
+  input.value = '';
+  dialog.showModal();
+  input.focus();
+
+  dialog.onclose = async () => {
+    if (dialog.returnValue !== 'connect' || !input.value.trim()) return;
+    setStatus(`Connecting to ${input.value.trim()}…`);
+    const { device, error } = await wifi.connect(input.value.trim());
+    if (!device) return setStatus(error);
+    addWifiDevice(device);
+    knownDevices = await wifi.known();
+    selectWifi(device);
+    setStatus(`Connected to ${device.name}`);
+  };
 }
 
 // ---------------------------------------------------------------- selection
@@ -168,10 +257,60 @@ function selectWifi(device) {
   renderSendView();
 }
 
+async function selectRecent() {
+  selection = { kind: 'recent' };
+  dirStack.length = 0;
+  selected.clear();
+  renderSidebar();
+  await renderRecent();
+}
+
+async function renderRecent() {
+  const entries = await beam.history();
+  crumbsEl.textContent = 'Recent transfers';
+  updateToolbar();
+  if (!entries.length) {
+    contentEl.innerHTML =
+      '<div class="blank"><div class="big">🕘</div>' +
+      '<div class="hint">Nothing yet. Files you send or receive show up here.</div></div>';
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'recent';
+  for (const e of entries) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const sent = e.direction === 'sent';
+    row.innerHTML = `<span class="dir ${sent ? 'out' : 'in'}">${sent ? '↑' : '↓'}</span>
+      <span class="nm"></span><span class="meta"></span>`;
+    const nameEl = row.querySelector('.nm');
+    nameEl.textContent = e.name;
+    // Only received files are still ours to open; sent ones may have moved.
+    if (!sent && e.path) {
+      nameEl.classList.add('open');
+      nameEl.title = e.path;
+      nameEl.onclick = () => beam.openFile(e.path);
+    }
+    row.querySelector('.meta').textContent = [
+      sent ? `to ${e.peer}` : `from ${e.peer}`,
+      fmtSize(e.size),
+      ago(e.at),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    list.appendChild(row);
+  }
+  contentEl.innerHTML = '';
+  contentEl.appendChild(list);
+}
+
 // ----------------------------------------------------------------- browsing
 
 async function openDir(dirPath) {
   selected.clear();
+  filterText = '';
+  searchEl.value = '';
   contentEl.innerHTML = '<div class="blank">Loading…</div>';
   try {
     if (selection.kind === 'mac') {
@@ -191,6 +330,31 @@ async function openDir(dirPath) {
   }
 }
 
+const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
+
+/**
+ * Folders always sort first -- a file explorer that mixes them by size is
+ * technically consistent and useless in practice.
+ */
+function visibleEntries() {
+  const needle = filterText.trim().toLowerCase();
+  const rows = needle
+    ? currentEntries.filter((e) => e.name.toLowerCase().includes(needle))
+    : currentEntries.slice();
+
+  const dir = sortAsc ? 1 : -1;
+  rows.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    if (sortKey === 'size') return dir * ((a.size || 0) - (b.size || 0));
+    // A cabled phone's listing has no timestamps, so date falls back to name.
+    if (sortKey === 'date' && a.mtime != null && b.mtime != null) {
+      return dir * (a.mtime - b.mtime);
+    }
+    return dir * a.name.localeCompare(b.name);
+  });
+  return rows;
+}
+
 function renderEntries() {
   crumbsEl.textContent = currentPath ?? '';
   contentEl.innerHTML = '';
@@ -208,7 +372,16 @@ function renderEntries() {
     return;
   }
 
-  for (const entry of currentEntries) contentEl.appendChild(renderEntry(entry));
+  const rows = visibleEntries();
+  if (!rows.length) {
+    contentEl.innerHTML =
+      '<div class="blank"><div class="big">🔍</div><div>Nothing matches “' +
+      filterText.replace(/[<&]/g, '') +
+      '”.</div></div>';
+    updateToolbar();
+    return;
+  }
+  for (const entry of rows) contentEl.appendChild(renderEntry(entry));
   updateToolbar();
 }
 
@@ -228,9 +401,27 @@ function renderEntry(entry) {
   };
   row.appendChild(box);
 
+  // A thumbnail only works for files this Mac can actually read; a phone's
+  // files would each have to be pulled first, which a listing shouldn't do.
+  const thumbable =
+    selection.kind === 'mac' && !entry.isDir && IMAGE_RE.test(entry.name);
+  if (thumbable) {
+    const thumb = document.createElement('img');
+    thumb.className = 'thumb';
+    thumb.loading = 'lazy';
+    thumb.src = `file://${encodeURI(entry.path)}`;
+    // A broken image would sit there as a grey square; the emoji is better.
+    thumb.onerror = () => {
+      thumb.replaceWith(document.createTextNode('📄'));
+    };
+    row.appendChild(thumb);
+  }
+
   const nm = document.createElement('span');
   nm.className = `nm ${entry.isDir ? 'dir' : 'file'}`;
-  nm.textContent = `${entry.isDir ? '📁' : '📄'} ${entry.name}`;
+  nm.textContent = thumbable
+    ? entry.name
+    : `${entry.isDir ? '📁' : '📄'} ${entry.name}`;
   nm.onclick = () => {
     if (entry.isDir) {
       dirStack.push(currentPath);
@@ -280,17 +471,52 @@ function renderSendView() {
     e.preventDefault();
     box.classList.remove('over');
     const paths = pathsFromDrop(e);
-    if (!paths.length) return;
-    setStatus(`Sending ${paths.length} file${paths.length === 1 ? '' : 's'}…`);
-    const sent = await wifi.send(selection.device, paths);
-    setProgress(null);
-    setStatus(
-      sent.length === paths.length
-        ? `Sent ${sent.length} file${sent.length === 1 ? '' : 's'} to ${selection.device.name}`
-        : `Sent ${sent.length} of ${paths.length} — check the phone`
-    );
+    if (paths.length) await sendOverWifi(selection.device, paths);
   });
   updateToolbar();
+}
+
+/** Shared by the drop target and the retry button. */
+async function sendOverWifi(device, paths) {
+  const target = device;
+  setStatus(`Sending to ${target.name}…`);
+  const { sent, failed } = await wifi.send(target, paths);
+  setProgress(null);
+  if (!failed.length) {
+    setStatus(`Sent ${sent.length} file${sent.length === 1 ? '' : 's'} to ${target.name}`);
+    renderRetry(null);
+    return;
+  }
+  setStatus(
+    `Sent ${sent.length}, ${failed.length} failed — ${failed[0].message}`
+  );
+  renderRetry({ device: target, failed });
+}
+
+/**
+ * A failed file is usually one glitch away from working, so offer exactly the
+ * files that failed rather than making the whole batch happen again.
+ */
+function renderRetry(state) {
+  const existing = $('retry-bar');
+  if (existing) existing.remove();
+  if (!state) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'retry-bar';
+  bar.className = 'retry';
+  bar.innerHTML = `<span class="txt"></span>
+    <button class="tool" id="retry-dismiss">Dismiss</button>
+    <button class="tool primary" id="retry-go">Retry ${state.failed.length}</button>`;
+  bar.querySelector('.txt').textContent = state.failed
+    .map((f) => f.name)
+    .join(', ');
+  contentEl.parentElement.insertBefore(bar, contentEl.nextSibling);
+  $('retry-dismiss').onclick = () => renderRetry(null);
+  $('retry-go').onclick = () => {
+    renderRetry(null);
+    sendOverWifi(state.device, state.failed.map((f) => f.path));
+  };
 }
 
 // ------------------------------------------------------------------ toolbar
@@ -310,6 +536,9 @@ function updateToolbar() {
 
   for (const b of [btnNewFolder, btnRename, btnCut, btnPaste, btnDelete, btnCopy]) {
     b.style.display = usb ? '' : 'none';
+  }
+  for (const el of [searchEl, sortKeyEl, sortDirEl]) {
+    el.style.display = browsing ? '' : 'none';
   }
 
   if (n) setStatus(`${n} item${n === 1 ? '' : 's'} selected`);
@@ -480,6 +709,8 @@ wifi.onProgress((ev) => {
     setStatus(`Waiting for ${ev.device} to accept — code ${ev.code}`);
   } else if (ev.type === 'start') {
     setStatus(`Sending ${ev.name} (${ev.index + 1} of ${ev.total})…`);
+  } else if (ev.type === 'done' && ev.pct != null) {
+    setProgress(ev.pct);
   } else if (ev.type === 'error') {
     setStatus(`Failed on ${ev.name}: ${ev.message}`);
   }
@@ -505,11 +736,34 @@ beam.onTransferDone((d) => {
   setProgress(null);
   setStatus(`Received ${d.files.map((f) => f.name).join(', ')} from ${d.sender}`);
   if (selection?.kind === 'mac') openDir(currentPath);
+  if (selection?.kind === 'recent') renderRecent();
 });
 beam.onTransferError((d) => setStatus(`Transfer failed: ${d.message}`));
 
+wifi.onFound(addWifiDevice);
+
+searchEl.oninput = () => {
+  filterText = searchEl.value;
+  if (selection?.kind === 'mac' || isUsb()) renderEntries();
+};
+
+sortKeyEl.value = sortKey;
+sortDirEl.textContent = sortAsc ? '↑' : '↓';
+sortKeyEl.onchange = () => {
+  sortKey = sortKeyEl.value;
+  localStorage.setItem('sortKey', sortKey);
+  if (selection?.kind === 'mac' || isUsb()) renderEntries();
+};
+sortDirEl.onclick = () => {
+  sortAsc = !sortAsc;
+  localStorage.setItem('sortAsc', String(sortAsc));
+  sortDirEl.textContent = sortAsc ? '↑' : '↓';
+  if (selection?.kind === 'mac' || isUsb()) renderEntries();
+};
+
 $('refresh-usb').onclick = refreshUsb;
 $('refresh-wifi').onclick = refreshWifi;
+$('add-wifi').onclick = connectByIp;
 
 (async function init() {
   const state = await beam.getState();
