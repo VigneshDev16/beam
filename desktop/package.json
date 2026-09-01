@@ -8,7 +8,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --mac",
+    "dist": "electron-builder --mac --config electron-builder.config.js",
     "pack": "electron-builder --dir"
   },
   "devDependencies": {
@@ -17,36 +17,5 @@
   },
   "dependencies": {
     "busboy": "^1.6.0"
-  },
-  "build": {
-    "appId": "com.vicky.beam",
-    "productName": "Beam",
-    "files": [
-      "src/**/*",
-      "build/icon.icns"
-    ],
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "mac": {
-      "category": "public.app-category.utilities",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "build/icon.icns",
-      "extendInfo": {
-        "NSLocalNetworkUsageDescription": "Beam finds your phone on the local network to transfer files.",
-        "LSUIElement": false
-      }
-    },
-    "dmg": {
-      "title": "Beam ${version}"
-    }
   }
 }
