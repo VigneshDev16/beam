@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from 'react-native';
@@ -21,15 +23,19 @@ import {
   scanForDevices,
 } from './src/discovery';
 import {
+  ApprovalRequest,
   ReceivedFile,
+  onApprovalRequest,
   onFileReceived,
+  respondToOffer,
   startReceiver,
   stopReceiver,
 } from './src/receiver';
-import { PickedFile, uploadFiles } from './src/upload';
+import { PickedFile, requestApproval, uploadFiles } from './src/upload';
 
 type SendState =
   | { phase: 'idle' }
+  | { phase: 'waiting'; code: string }
   | { phase: 'sending'; pct: number }
   | { phase: 'done'; count: number }
   | { phase: 'error'; message: string };
@@ -51,6 +57,8 @@ function BeamApp() {
   const [receiving, setReceiving] = useState(false);
   const [receiverLabel, setReceiverLabel] = useState<string | null>(null);
   const [received, setReceived] = useState<ReceivedFile[]>([]);
+  const [incoming, setIncoming] = useState<ApprovalRequest | null>(null);
+  const [trustSender, setTrustSender] = useState(false);
   const scanRunning = useRef(false);
 
   const runScan = useCallback(async () => {
@@ -89,6 +97,31 @@ function BeamApp() {
     });
     return unsubscribe;
   }, [receiving]);
+
+  // Someone wants to send us something. Queue depth of one is fine here:
+  // a second request while a prompt is open simply waits its turn.
+  useEffect(() => {
+    if (!receiving) return;
+    const unsubscribe = onApprovalRequest((req) => {
+      setTrustSender(false);
+      setIncoming(req);
+    });
+    return unsubscribe;
+  }, [receiving]);
+
+  const answerIncoming = useCallback(
+    async (accepted: boolean) => {
+      const req = incoming;
+      setIncoming(null);
+      if (!req) return;
+      try {
+        await respondToOffer(req.id, accepted, accepted && trustSender);
+      } catch (e: any) {
+        console.warn('respondToOffer failed', e?.message);
+      }
+    },
+    [incoming, trustSender],
+  );
 
   const toggleReceive = useCallback(async (on: boolean) => {
     try {
@@ -136,10 +169,19 @@ function BeamApp() {
     if (!target || files.length === 0) return;
     setSend({ phase: 'sending', pct: 0 });
     try {
-      await uploadFiles(target, files, (p) => {
-        const pct = p.totalBytes > 0 ? (p.sentBytes / p.totalBytes) * 100 : 0;
-        setSend({ phase: 'sending', pct });
-      });
+      const token = await requestApproval(target, files, (code) =>
+        setSend({ phase: 'waiting', code }),
+      );
+      setSend({ phase: 'sending', pct: 0 });
+      await uploadFiles(
+        target,
+        files,
+        (p) => {
+          const pct = p.totalBytes > 0 ? (p.sentBytes / p.totalBytes) * 100 : 0;
+          setSend({ phase: 'sending', pct });
+        },
+        token,
+      );
       setSend({ phase: 'done', count: files.length });
       setFiles([]);
     } catch (e: any) {
@@ -147,7 +189,7 @@ function BeamApp() {
     }
   }, [devices, selectedKey, files]);
 
-  const sending = send.phase === 'sending';
+  const sending = send.phase === 'sending' || send.phase === 'waiting';
   const canSend = !!selectedKey && files.length > 0 && !sending;
 
   return (
@@ -249,6 +291,11 @@ function BeamApp() {
         ))}
       </View>
 
+      {send.phase === 'waiting' && (
+        <Text style={s.waiting}>
+          Waiting for the other device to accept — code {send.code}
+        </Text>
+      )}
       {send.phase === 'sending' && (
         <View style={s.progressWrap}>
           <View style={[s.progressBar, { width: `${send.pct}%` }]} />
@@ -261,13 +308,82 @@ function BeamApp() {
       )}
       {send.phase === 'error' && <Text style={s.error}>{send.message}</Text>}
 
+      <Modal
+        visible={!!incoming}
+        transparent
+        animationType="fade"
+        onRequestClose={() => answerIncoming(false)}
+      >
+        <View style={s.backdrop}>
+          <View style={s.sheet}>
+            <Text style={s.sheetTitle}>
+              {incoming?.from} wants to send you
+              {incoming?.files.length
+                ? ` ${incoming.files.length} file${incoming.files.length === 1 ? '' : 's'}`
+                : ' files'}
+            </Text>
+
+            {incoming?.files.length ? (
+              <View style={s.sheetFiles}>
+                {incoming.files.slice(0, 5).map((f, i) => (
+                  <Text key={`${f.name}-${i}`} style={s.sheetFile} numberOfLines={1}>
+                    {f.name}
+                    {f.size ? `  ·  ${fmtBytes(f.size)}` : ''}
+                  </Text>
+                ))}
+                {incoming.files.length > 5 ? (
+                  <Text style={s.sheetFile}>…and {incoming.files.length - 5} more</Text>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={s.sheetFile}>
+                This sender is using an older version of Beam, so it cannot list the
+                files first.
+              </Text>
+            )}
+
+            {incoming?.code ? (
+              <>
+                <Text style={s.codeLabel}>Verification code</Text>
+                <Text style={s.code}>{incoming.code}</Text>
+                <Text style={s.codeHint}>
+                  The sending device should be showing the same code.
+                </Text>
+              </>
+            ) : null}
+
+            {incoming?.canTrust ? (
+              <View style={s.trustRow}>
+                <Text style={s.trustLabel}>Always allow this device</Text>
+                <Switch
+                  value={trustSender}
+                  onValueChange={setTrustSender}
+                  trackColor={{ true: '#4f7cff', false: '#2c313a' }}
+                />
+              </View>
+            ) : null}
+
+            <View style={s.sheetBtns}>
+              <Pressable style={[s.sheetBtn, s.declineBtn]} onPress={() => answerIncoming(false)}>
+                <Text style={s.declineText}>Decline</Text>
+              </Pressable>
+              <Pressable style={[s.sheetBtn, s.acceptBtn]} onPress={() => answerIncoming(true)}>
+                <Text style={s.acceptText}>Accept</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <Pressable
         style={[s.sendBtn, !canSend && s.sendBtnDisabled]}
         onPress={doSend}
         disabled={!canSend}
       >
         <Text style={s.sendBtnText}>
-          {sending
+          {send.phase === 'waiting'
+            ? 'Waiting for approval…'
+            : sending
             ? `Sending… ${Math.round(send.phase === 'sending' ? send.pct : 0)}%`
             : 'Send'}
         </Text>
@@ -363,4 +479,50 @@ const s = StyleSheet.create({
   },
   sendBtnDisabled: { backgroundColor: '#2c3646' },
   sendBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  waiting: {
+    color: '#e8b339',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+
+  // incoming-transfer prompt
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  sheet: { backgroundColor: '#1b1f27', borderRadius: 18, padding: 22 },
+  sheetTitle: { color: '#eceff3', fontSize: 18, fontWeight: '700', lineHeight: 24 },
+  sheetFiles: { marginTop: 14, gap: 4 },
+  sheetFile: { color: '#9aa3af', fontSize: 13.5, marginTop: 12 },
+  codeLabel: {
+    color: '#788088',
+    fontSize: 11,
+    letterSpacing: 1,
+    marginTop: 20,
+    textTransform: 'uppercase',
+  },
+  code: {
+    color: '#6d93ff',
+    fontSize: 34,
+    fontWeight: '800',
+    letterSpacing: 6,
+    marginTop: 4,
+  },
+  codeHint: { color: '#788088', fontSize: 12, marginTop: 6 },
+  trustRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  trustLabel: { color: '#dde2e8', fontSize: 14 },
+  sheetBtns: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  sheetBtn: { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  declineBtn: { borderWidth: 1, borderColor: '#2c313a' },
+  declineText: { color: '#dde2e8', fontSize: 15, fontWeight: '600' },
+  acceptBtn: { backgroundColor: '#4f7cff' },
+  acceptText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
