@@ -353,14 +353,16 @@ function BeamApp() {
             ) : null}
 
             {incoming?.canTrust ? (
-              <View style={s.trustRow}>
+              // The whole row toggles: tapping only the switch is a fiddly
+              // target, and people reach for the label first.
+              <Pressable style={s.trustRow} onPress={() => setTrustSender((v) => !v)}>
                 <Text style={s.trustLabel}>Always allow this device</Text>
                 <Switch
                   value={trustSender}
                   onValueChange={setTrustSender}
                   trackColor={{ true: '#4f7cff', false: '#2c313a' }}
                 />
-              </View>
+              </Pressable>
             ) : null}
 
             <View style={s.sheetBtns}>

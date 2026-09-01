@@ -1,6 +1,7 @@
 #import "BeamReceiver.h"
 #import <UIKit/UIKit.h>
 #import <GCDWebServer/GCDWebServer.h>
+#import <GCDWebServer/GCDWebServerDataRequest.h>
 #import <GCDWebServer/GCDWebServerDataResponse.h>
 #import <GCDWebServer/GCDWebServerMultiPartFormRequest.h>
 
@@ -8,6 +9,14 @@ static const NSUInteger kBeamPort = 8791;
 static const NSTimeInterval kOfferTTL = 120;
 static NSString *const kDeviceIdKey = @"BeamDeviceId";
 static NSString *const kTrustedKey = @"BeamTrustedDevices";
+
+/** GCDWebServer has no responseWithJSONObject:statusCode:, so set it after. */
+static GCDWebServerDataResponse *BeamJSON(id object, NSInteger statusCode) {
+  GCDWebServerDataResponse *response =
+      [GCDWebServerDataResponse responseWithJSONObject:object];
+  response.statusCode = statusCode;
+  return response;
+}
 
 /** A pending or approved transfer request. */
 @interface BeamOffer : NSObject
@@ -352,9 +361,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
       }
       if (!match) {
         [self discardFiles:upload.files];
-        return completionBlock([GCDWebServerDataResponse
-            responseWithJSONObject:@{ @"error" : @"not approved" }
-                        statusCode:403]);
+        return completionBlock(BeamJSON(@{ @"error" : @"not approved" }, 403));
       }
       NSArray *saved = [self saveFiles:upload.files from:match.from];
       return completionBlock([GCDWebServerDataResponse
@@ -376,9 +383,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
       if (!strong) return;
       if (!accepted) {
         [strong discardFiles:upload.files];
-        completionBlock([GCDWebServerDataResponse
-            responseWithJSONObject:@{ @"error" : @"declined" }
-                        statusCode:403]);
+        completionBlock(BeamJSON(@{ @"error" : @"declined" }, 403));
         return;
       }
       NSArray *saved = [strong saveFiles:upload.files from:sender];

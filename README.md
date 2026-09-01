@@ -108,9 +108,15 @@ liability, so the receiver asks first:
 Tick **Always allow this device** and that device skips the prompt next time;
 trust is keyed to a per-install device id, stored locally.
 
+All three receivers do this — the Mac shows a native dialog, the phones show a
+sheet with the file list and the code.
+
 Senders running an older build can't make an offer, so the receiver prompts when
-their upload arrives instead — and **leaves the request body unread until you
-decide**, so declining costs no bandwidth and writes nothing to disk.
+their upload arrives instead. On the Mac and on Android the request body is left
+**unread until you decide**, so declining costs no bandwidth and writes nothing.
+On iOS the framework hands the handler an already-parsed body, so the bytes have
+arrived by then — nothing is saved unless you accept, and the temporary files are
+deleted if you decline.
 
 > This is authorisation, not authentication. It stops silent drive-by
 > transfers, which is the realistic risk on a home network. It is not a
@@ -257,7 +263,7 @@ success message:
 
 ## Roadmap
 
-- [x] Receiver approval prompt + verification code *(desktop receiver; mobile next)*
+- [x] Receiver approval prompt + verification code — Mac, Android and iOS
 - [ ] TLS for transfers
 - [ ] Copy/duplicate on the phone, and undo
 - [ ] Folder drag-and-drop
