@@ -1,0 +1,6 @@
+• Devices you've used before appear straight away and reconnect in about a second
+• Connect by IP address for networks where discovery is blocked
+• A record of what you've sent and received
+• Failed files can be retried on their own
+• Per-file progress while sending
+• Keeps receiving while the app is in the background, with a notification when a file lands

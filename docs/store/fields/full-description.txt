@@ -1,0 +1,40 @@
+Beam moves files between your phone and your computer over your own Wi-Fi.
+Nothing is uploaded to a server, nothing needs an account, and there is no
+size limit beyond the space on your devices.
+
+Open Beam on both devices and they find each other on the network. Pick the
+files, send them, done — at local network speed rather than upload-then-
+download speed.
+
+WHAT IT DOES
+
+• Send files from your phone to your laptop, and from your laptop to your phone
+• Devices discover each other automatically on the same Wi-Fi
+• Connect by IP address when a network blocks device discovery
+• Remembers the devices you use, so they're one tap away next time
+• A history of what you've sent and received
+• Retry just the files that failed, instead of the whole batch
+• Received files go to your Downloads folder, where every other app can see them
+
+PRIVACY
+
+Beam has no servers. Your files travel directly from one device to the other
+over your local network. There is no account, no telemetry, and no analytics.
+The app asks for network access and, on Android 13 and later, permission to
+show a notification while it is listening.
+
+NOTHING ARRIVES WITHOUT PERMISSION
+
+When another device wants to send you something, Beam shows you what it is,
+who it's from, and a six-digit code that the sending device shows too. Nothing
+is written to your phone until you accept. You can tick "always allow this
+device" for your own laptop.
+
+THE DESKTOP APP
+
+The companion app for macOS is a free download from the project page on GitHub.
+It also browses an Android phone over a USB cable — create folders, rename,
+move and delete files on the phone from your laptop, and drag files straight
+into Finder.
+
+Free and open source under the MIT licence.

@@ -155,3 +155,16 @@ phone shots already are.
 - Every future update must be signed with the same keystore, or Uptodown will
   reject it as a different app.
 - Bump `versionCode` for each upload — Uptodown refuses a duplicate.
+
+## 6. Paste helpers
+
+One file per field in `docs/store/fields/`, so filling the form is a copy
+command and a Cmd+V rather than a hunt through this document:
+
+```bash
+pbcopy < docs/store/fields/full-description.txt
+```
+
+`name`, `short-description`, `full-description`, `whats-new`, `tags`,
+`website`, `privacy-url`. Keep them and this document in step if the copy
+changes.
