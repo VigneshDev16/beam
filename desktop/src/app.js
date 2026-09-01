@@ -476,9 +476,26 @@ cable.onProgress((ev) => {
 });
 
 wifi.onProgress((ev) => {
-  if (ev.type === 'start') setStatus(`Sending ${ev.name} (${ev.index + 1} of ${ev.total})…`);
-  else if (ev.type === 'error') setStatus(`Failed on ${ev.name}: ${ev.message}`);
+  if (ev.type === 'awaiting-approval') {
+    setStatus(`Waiting for ${ev.device} to accept — code ${ev.code}`);
+  } else if (ev.type === 'start') {
+    setStatus(`Sending ${ev.name} (${ev.index + 1} of ${ev.total})…`);
+  } else if (ev.type === 'error') {
+    setStatus(`Failed on ${ev.name}: ${ev.message}`);
+  }
 });
+
+// Incoming requests: the prompt itself is a native dialog, but the status bar
+// echoes it so the code is visible without hunting for the window.
+beam.onApprovalPending((d) =>
+  setStatus(`${d.from} is asking to send ${d.files.length} file${
+    d.files.length === 1 ? '' : 's'
+  } — code ${d.code}`)
+);
+beam.onApprovalResolved((d) =>
+  setStatus(d.accepted ? `Accepted transfer from ${d.from}` : `Declined transfer from ${d.from}`)
+);
+beam.onApprovalAuto((d) => setStatus(`Accepting ${d.files} file(s) from ${d.from} (trusted device)`));
 
 beam.onTransferStart((d) => setStatus(`Receiving ${d.filename} from ${d.sender}…`));
 beam.onTransferProgress((d) => {

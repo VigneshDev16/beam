@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('beam', {
   pathForFile: (file) => webUtils.getPathForFile(file),
   startDrag: (paths) => ipcRenderer.send('drag:start', paths),
   listLocal: (dirPath) => ipcRenderer.invoke('local:listDir', dirPath),
+  onApprovalPending: (cb) => ipcRenderer.on('approval:pending', (_e, d) => cb(d)),
+  onApprovalResolved: (cb) => ipcRenderer.on('approval:resolved', (_e, d) => cb(d)),
+  onApprovalAuto: (cb) => ipcRenderer.on('approval:auto', (_e, d) => cb(d)),
 });
 
 contextBridge.exposeInMainWorld('cable', {

@@ -13,6 +13,8 @@ const path = require('path');
 const Busboy = require('busboy');
 const cable = require('./cable');
 const wifiSend = require('./wifi-send');
+const approval = require('./approval');
+const { version: APP_VERSION } = require('../package.json');
 
 const PORT = 8790;
 const SAVE_DIR = path.join(os.homedir(), 'Downloads', 'Beam');
@@ -48,9 +50,8 @@ function uniquePath(dir, filename) {
 
 let transferId = 0;
 
-function handleUpload(req, res) {
+function handleUpload(req, res, sender) {
   fs.mkdirSync(SAVE_DIR, { recursive: true });
-  const sender = decodeURIComponent(new URL(req.url, 'http://x').searchParams.get('from') || 'Phone');
   const totalBytes = parseInt(req.headers['content-length'] || '0', 10);
   let receivedBytes = 0;
   const id = ++transferId;
@@ -86,6 +87,130 @@ function handleUpload(req, res) {
   req.pipe(bb);
 }
 
+/** Step 1: the sender declares who it is and what it wants to send. */
+async function handleOffer(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'bad request' }));
+  }
+
+  const offer = approval.createOffer(body);
+  const reply = (extra) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id: offer.id, code: offer.code, ...extra }));
+  };
+
+  // A device the user has already trusted skips the prompt entirely.
+  if (approval.isTrusted(offer.deviceId)) {
+    const accepted = approval.accept(offer.id);
+    send('approval:auto', { from: offer.from, files: offer.files.length });
+    return reply({ status: 'accepted', token: accepted.token });
+  }
+
+  reply({ status: 'pending' });
+
+  // Ask after replying, so the sender can start polling and show the code.
+  send('approval:pending', { from: offer.from, code: offer.code, files: offer.files });
+  const { accepted, trust } = await askApproval({
+    from: offer.from,
+    files: offer.files,
+    code: offer.code,
+    canTrust: !!offer.deviceId,
+  });
+  if (accepted) {
+    approval.accept(offer.id);
+    if (trust) approval.trustDevice(offer.deviceId, offer.from);
+  } else {
+    approval.decline(offer.id);
+  }
+  send('approval:resolved', { from: offer.from, accepted });
+}
+
+/**
+ * Step 2: the actual bytes. A token proves the user already said yes.
+ * Senders too old to make an offer still get a prompt — the body is left
+ * unread until the user decides, so declining costs no bandwidth.
+ */
+async function handleUploadRequest(req, res) {
+  const url = new URL(req.url, 'http://x');
+  const token = url.searchParams.get('token');
+
+  if (token) {
+    const offer = approval.redeemToken(token);
+    if (!offer) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'not approved' }));
+    }
+    return handleUpload(req, res, offer.from);
+  }
+
+  const from = decodeURIComponent(url.searchParams.get('from') || 'Unknown device');
+  const totalBytes = parseInt(req.headers['content-length'] || '0', 10);
+  const { accepted } = await askApproval({ from, files: [], totalBytes, canTrust: false });
+  if (!accepted) {
+    send('approval:resolved', { from, accepted: false });
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'declined' }));
+  }
+  handleUpload(req, res, from);
+}
+
+function readJson(req, limitBytes = 256 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > limitBytes) reject(new Error('body too large'));
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(body || '{}'));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function fmtBytes(n) {
+  if (!n) return '';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
+  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+/**
+ * Ask the user to accept an incoming transfer. Returns {accepted, trust}.
+ * Cancel is the default so a stray Return keypress never accepts.
+ */
+async function askApproval({ from, files, code, totalBytes, canTrust }) {
+  const list = (files || []).slice(0, 6).map((f) => `  ${f.name}${f.size ? `  (${fmtBytes(f.size)})` : ''}`);
+  const more = files && files.length > 6 ? `\n  …and ${files.length - 6} more` : '';
+  const summary = list.length
+    ? `${list.join('\n')}${more}`
+    : totalBytes
+    ? `${fmtBytes(totalBytes)} of data`
+    : 'unknown contents';
+
+  const opts = {
+    type: 'question',
+    buttons: ['Decline', 'Accept'],
+    defaultId: 0,
+    cancelId: 0,
+    message: `${from} wants to send you ${files && files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : 'files'}`,
+    detail: `${summary}\n\n${code ? `Verification code: ${code}\nThe sending device should be showing the same code.` : 'This sender is using an older version of Beam, so it cannot show a verification code.'}`,
+  };
+  if (canTrust) opts.checkboxLabel = 'Always allow this device';
+
+  if (win && !win.isDestroyed()) win.show();
+  const { response, checkboxChecked } = await dialog.showMessageBox(win ?? undefined, opts);
+  return { accepted: response === 1, trust: !!checkboxChecked };
+}
+
 function startServer() {
   const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -96,11 +221,25 @@ function startServer() {
           app: 'beam',
           name: os.hostname().replace(/\.local$/, ''),
           platform: process.platform,
-          version: '0.1.0',
+          version: APP_VERSION,
+          features: ['offer'],
         })
       );
+    } else if (req.method === 'POST' && req.url.startsWith('/offer')) {
+      handleOffer(req, res);
+    } else if (req.method === 'GET' && req.url.startsWith('/offer/')) {
+      const id = req.url.split('/')[2]?.split('?')[0];
+      const offer = approval.getOffer(id);
+      res.writeHead(offer ? 200 : 404, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify(
+          offer
+            ? { status: offer.status, token: offer.status === 'accepted' ? offer.token : null }
+            : { status: 'expired' }
+        )
+      );
     } else if (req.method === 'POST' && req.url.startsWith('/upload')) {
-      handleUpload(req, res);
+      handleUploadRequest(req, res);
     } else {
       res.writeHead(404);
       res.end();
@@ -271,7 +410,12 @@ ipcMain.handle('wifi:scan', async () => {
 });
 
 ipcMain.handle('wifi:send', async (_e, device, localPaths) => {
-  return wifiSend.sendFiles(device, localPaths, (ev) => send('wifi:progress', ev));
+  return wifiSend.sendFiles(
+    device,
+    localPaths,
+    (ev) => send('wifi:progress', ev),
+    app.getPath('userData')
+  );
 });
 
 // Must be a plain 'on' (not handle): startDrag has to run during the drag event.
@@ -284,6 +428,7 @@ ipcMain.on('drag:start', (event, filePaths) => {
 });
 
 app.whenReady().then(() => {
+  approval.init(app.getPath('userData'));
   startServer();
   createWindow();
 });

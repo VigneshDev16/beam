@@ -86,10 +86,36 @@ graph LR
   M -.->|"adb: browse, pull,<br/>push, mkdir, mv, rm"| A
 ```
 
-**Two endpoints, that's the whole protocol:**
+**The protocol:**
 
-- `GET /info` → `{"app":"beam","name":"Vickys-MacBook","platform":"darwin"}`
-- `POST /upload?from=<sender>` → a multipart file upload
+- `GET /info` → `{"app":"beam","name":"Vickys-MacBook","platform":"darwin","features":["offer"]}`
+- `POST /offer` → declares who is asking and what they want to send
+- `GET /offer/<id>` → the sender polls until the other side answers
+- `POST /upload?token=<token>` → the bytes, once permission exists
+
+## Nothing arrives without permission
+
+A file-transfer tool that accepts anything from anyone on the network is a
+liability, so the receiver asks first:
+
+1. The sender **offers** — its name, and the list of files with sizes.
+2. The receiver **prompts**, showing exactly what is about to arrive and a
+   **six-digit code**. The sending device shows the same code, so you can tell
+   which device is really asking — names alone are trivially spoofable on a LAN.
+3. Only after you accept does the sender get a **one-use token**, valid for
+   exactly as many files as it declared. No token, no transfer.
+
+Tick **Always allow this device** and that device skips the prompt next time;
+trust is keyed to a per-install device id, stored locally.
+
+Senders running an older build can't make an offer, so the receiver prompts when
+their upload arrives instead — and **leaves the request body unread until you
+decide**, so declining costs no bandwidth and writes nothing to disk.
+
+> This is authorisation, not authentication. It stops silent drive-by
+> transfers, which is the realistic risk on a home network. It is not a
+> defence against an attacker who is already on your Wi-Fi and actively
+> spoofing — that needs TLS, which is the next thing on the list.
 
 **Discovery is a subnet sweep, deliberately.** A device reads its own Wi-Fi IP,
 then probes `/info` on all 254 addresses of its `/24` in parallel. The obvious
@@ -205,10 +231,10 @@ who turns on USB debugging.
 
 ## Honest limitations
 
-- **Transfers are unauthenticated and unencrypted.** Anything on your Wi-Fi that
-  finds the port can send you a file, and receivers accept silently. Fine on a
-  home network, not on café Wi-Fi. Receiver approval and TLS are the next things
-  to build.
+- **Transfers are approved, but not yet encrypted.** Nothing is written to disk
+  until you accept it (see below), but the bytes themselves still cross your
+  network in the clear, and a determined attacker on the same Wi-Fi could
+  impersonate a device you have trusted. TLS is next.
 - **Cable features need USB debugging**; MTP is read-only and blocked on macOS.
 - **iPhones can't use USB at all** — Apple exposes no MTP or filesystem there.
 - **Individual files only**; dragging whole folders isn't supported yet.
@@ -231,7 +257,7 @@ success message:
 
 ## Roadmap
 
-- [ ] Receiver approval prompt + pairing code
+- [x] Receiver approval prompt + verification code *(desktop receiver; mobile next)*
 - [ ] TLS for transfers
 - [ ] Copy/duplicate on the phone, and undo
 - [ ] Folder drag-and-drop
