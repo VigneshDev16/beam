@@ -522,13 +522,18 @@ function BeamApp() {
                   >
                     {item.direction === 'sent' ? '↑' : '↓'}
                   </Text>
-                  <Text style={s.recentName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={s.recentMeta}>
-                    {item.direction === 'sent' ? 'to' : 'from'} {item.peer} ·{' '}
-                    {ago(item.at)}
-                  </Text>
+                  {/* Two lines: on one line the peer and time squeeze the
+                      filename down to an ellipsis, which is the part you
+                      actually came to read. */}
+                  <View style={s.recentText}>
+                    <Text style={s.recentName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={s.recentMeta} numberOfLines={1}>
+                      {item.direction === 'sent' ? 'to' : 'from'} {item.peer} ·{' '}
+                      {ago(item.at)}
+                    </Text>
+                  </View>
                 </View>
               )}
             />
@@ -799,8 +804,9 @@ const s = StyleSheet.create({
   },
   arrowIn: { color: '#4cc27a', fontSize: 14, width: 14 },
   arrowOut: { color: '#6d93ff', fontSize: 14, width: 14 },
-  recentName: { color: '#dde2e8', fontSize: 14, flex: 1 },
-  recentMeta: { color: '#788088', fontSize: 11.5 },
+  recentText: { flex: 1, minWidth: 0 },
+  recentName: { color: '#dde2e8', fontSize: 14 },
+  recentMeta: { color: '#788088', fontSize: 11.5, marginTop: 2 },
   sheetBtns: { flexDirection: 'row', gap: 12, marginTop: 24 },
   sheetBtn: { flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   declineBtn: { borderWidth: 1, borderColor: '#2c313a' },
