@@ -527,6 +527,18 @@ async function copyFiles(device, items, onEvent, destDir) {
           await adbPull(adb, device.id, item.path, dest, (pct) =>
             onEvent({ type: 'progress', name: item.name, pct, index: i })
           );
+          // du reports disk usage, which rounds up to whole blocks and runs a
+          // little ahead of the real byte count -- so the bar would stop at
+          // 98% on a job that finished. The last word goes to what landed.
+          const copied = localBytes(dest);
+          onEvent({
+            type: 'bytes',
+            name: item.name,
+            copied,
+            total: Math.max(total, copied),
+            index: i,
+            pct: 100,
+          });
         } finally {
           clearInterval(ticker);
         }
