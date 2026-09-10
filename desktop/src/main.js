@@ -427,6 +427,10 @@ ipcMain.handle('cable:listDevices', async () => {
   }
 });
 
+ipcMain.handle('cable:index', async (_e, device) => {
+  return cable.indexMedia(device);
+});
+
 ipcMain.handle('cable:listDir', async (_e, device, dirPath) => {
   return cable.listDir(device, dirPath);
 });

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('beam', {
 contextBridge.exposeInMainWorld('cable', {
   listDevices: () => ipcRenderer.invoke('cable:listDevices'),
   listDir: (device, dirPath) => ipcRenderer.invoke('cable:listDir', device, dirPath),
+  index: (device) => ipcRenderer.invoke('cable:index', device),
   copy: (device, items) => ipcRenderer.invoke('cable:copy', device, items),
   push: (device, localPaths, remoteDir) =>
     ipcRenderer.invoke('cable:push', device, localPaths, remoteDir),

@@ -481,6 +481,59 @@ async function copyFiles(device, items, onEvent) {
  * Write files from the Mac onto the phone (drag-in).
  * MTP is not supported here — on macOS it cannot even read (see mtpBlockedReason).
  */
+/**
+ * Every media file on the phone, from the phone's own index.
+ *
+ * Walking /sdcard with `find` takes tens of seconds and needs a stat per file;
+ * Android already maintains MediaStore for exactly this, and it answers in
+ * about a second. media_type: 1 image, 2 audio, 3 video, 6 document.
+ */
+async function indexMedia(device) {
+  if (device.backend !== 'adb') {
+    throw new Error(
+      'Indexing the phone needs USB debugging. Enable it on the phone, or browse folder by folder.'
+    );
+  }
+  const adb = findAdb();
+  if (!adb) throw new Error('adb not found');
+
+  const { stdout } = await run(
+    adb,
+    [
+      '-s',
+      device.id,
+      'shell',
+      'content query --uri content://media/external/file ' +
+        '--projection _data:_size:date_modified:media_type ' +
+        '--where "media_type IN (1,2,3,6)" 2>/dev/null',
+    ],
+    { timeout: 3 * 60 * 1000 }
+  );
+
+  // A filename can contain ", " so only the trailing columns are anchored.
+  const ROW =
+    /^Row: \d+ _data=(.*), _size=(\d+|NULL), date_modified=(\d+|NULL), media_type=(\d+|NULL)$/;
+  const KIND = { 1: 'image', 2: 'audio', 3: 'video' };
+
+  const files = [];
+  for (const line of stdout.split('\n')) {
+    const m = line.trim().match(ROW);
+    if (!m) continue;
+    const [, remote, size, modified, type] = m;
+    if (size === 'NULL') continue; // directories carry no size
+    files.push({
+      name: path.posix.basename(remote),
+      path: remote,
+      dir: path.posix.dirname(remote),
+      isDir: false,
+      size: Number(size),
+      mtime: modified === 'NULL' ? null : Number(modified) * 1000,
+      kind: KIND[type] || null, // null: fall back to the extension
+    });
+  }
+  return files;
+}
+
 async function pushFiles(device, localPaths, remoteDir, onEvent) {
   if (device.backend !== 'adb') {
     throw new Error(
@@ -662,6 +715,7 @@ function refreshMtpCache() {
 }
 
 module.exports = {
+  indexMedia,
   SAVE_DIR,
   ADB_DEFAULT_PATH,
   toolStatus,

@@ -41,6 +41,7 @@ by a cable, that should work too.
 | 🖱 **Real drag and drop** | Drag files out of the phone into Finder; drag files — or whole folders — from Finder onto the phone. |
 | ⏱ **Remembers your devices** | A device you've used before comes back in about a second, and there's a history of what you've sent and received. |
 | 🖼 **Browse by kind** | Images, Videos, Audio, Documents, Archives — with real previews, including video frames and PDF first pages. |
+| 📷 **The whole phone at once** | A cabled phone is indexed from its own MediaStore in about a second, so Camera, Videos and Images span every folder — sort by size and the 7 GB clip is the first row. |
 | 🍎 **Works with iPhone too** | Over Wi-Fi. iOS gives no USB file access to anyone, so cable mode is Android-only. |
 | 🔒 **Nothing leaves your network** | No server, no account, no telemetry. |
 

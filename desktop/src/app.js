@@ -43,6 +43,8 @@ const dragReady = new Set();
 
 let filterText = '';
 let category = 'all';
+let phoneIndex = null; // every media file on the cabled phone, or null
+let indexState = 'idle'; // idle | loading | ready | failed
 let sortKey = localStorage.getItem('sortKey') || 'name';
 let sortAsc = localStorage.getItem('sortAsc') !== 'false';
 
@@ -238,6 +240,9 @@ async function selectMac() {
   selection = { kind: 'mac' };
   dirStack.length = 0;
   selected.clear();
+  currentEntries = [];
+  phoneIndex = null;
+  indexState = 'idle';
   renderSidebar();
   await openDir(null);
 }
@@ -247,8 +252,34 @@ async function selectUsb(device) {
   dirStack.length = 0;
   selected.clear();
   clipboard = null;
+  phoneIndex = null;
+  // Drop the previous pane's rows: until the phone answers they are the only
+  // thing the category counts have to go on, and they belong to the Mac.
+  currentEntries = [];
   renderSidebar();
+  // Both requests go out together -- the index takes about a second and the
+  // folder listing shouldn't be waiting behind it, or the other way round.
+  loadPhoneIndex(device);
   await openDir(null);
+}
+
+/**
+ * Ask the phone for its media index in the background. It answers in about a
+ * second, so the folder listing is never held up waiting for it.
+ */
+async function loadPhoneIndex(device) {
+  indexState = 'loading';
+  renderCategoryBar();
+  try {
+    const files = await cable.index(device);
+    if (!isUsb() || selection.device.id !== device.id) return; // moved on
+    phoneIndex = files;
+    indexState = 'ready';
+  } catch (e) {
+    indexState = 'failed';
+    setStatus(e.message);
+  }
+  renderCategoryBar();
 }
 
 function selectWifi(device) {
@@ -343,6 +374,8 @@ const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|svg|avif)$/i;
  */
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: '🗂' },
+  // Phones only: the roll people actually came for.
+  { id: 'camera', label: 'Camera', icon: '📷', phoneOnly: true },
   {
     id: 'image',
     label: 'Images',
@@ -378,9 +411,22 @@ const CATEGORIES = [
 
 function categoryOf(entry) {
   if (entry.isDir) return 'folder';
+  // The phone's MediaStore has already classified its own files; only fall
+  // back to guessing from the extension when it hasn't.
+  if (entry.kind) return entry.kind;
   const hit = CATEGORIES.find((c) => c.re && c.re.test(entry.name));
   return hit ? hit.id : 'other';
 }
+
+const CAMERA_RE = /\/DCIM\/(Camera|100[A-Z]+)(\/|$)/i;
+
+/** The rows a category chip shows: the phone's whole index, or this folder. */
+function categorySource() {
+  return isUsb() && phoneIndex ? phoneIndex : currentEntries;
+}
+
+const inCategory = (entry, id) =>
+  id === 'camera' ? CAMERA_RE.test(entry.path || '') : categoryOf(entry) === id;
 
 /**
  * Folders always sort first -- a file explorer that mixes them by size is
@@ -388,14 +434,17 @@ function categoryOf(entry) {
  */
 function visibleEntries() {
   const needle = filterText.trim().toLowerCase();
+  // A category on a cabled phone searches the whole phone, not one folder --
+  // "where are my videos" is not a question about the current directory.
+  const source = category === 'all' ? currentEntries : categorySource();
   let rows = needle
-    ? currentEntries.filter((e) => e.name.toLowerCase().includes(needle))
-    : currentEntries.slice();
+    ? source.filter((e) => e.name.toLowerCase().includes(needle))
+    : source.slice();
 
   // Picking a category means you're looking for files of a kind, so the
   // folders in this listing stop being useful and get out of the way.
   if (category !== 'all') {
-    rows = rows.filter((e) => !e.isDir && categoryOf(e) === category);
+    rows = rows.filter((e) => !e.isDir && inCategory(e, category));
   }
 
   const dir = sortAsc ? 1 : -1;
@@ -413,20 +462,41 @@ function visibleEntries() {
 
 function renderCategoryBar() {
   catBar.innerHTML = '';
-  const files = currentEntries.filter((e) => !e.isDir);
+
+  if (isUsb() && indexState === 'loading') {
+    catBar.innerHTML = '<div class="cat-note">Indexing the phone…</div>';
+    return;
+  }
+  if (isUsb() && indexState === 'failed') {
+    catBar.innerHTML =
+      '<div class="cat-note">Categories need USB debugging on the phone.</div>';
+    return;
+  }
+
+  const files = categorySource().filter((e) => !e.isDir);
   const counts = new Map();
   for (const f of files) {
-    counts.set(categoryOf(f), (counts.get(categoryOf(f)) || 0) + 1);
+    const id = categoryOf(f);
+    counts.set(id, (counts.get(id) || 0) + 1);
+    if (isUsb() && CAMERA_RE.test(f.path || '')) {
+      counts.set('camera', (counts.get('camera') || 0) + 1);
+    }
   }
 
   for (const cat of CATEGORIES) {
-    const count = cat.id === 'all' ? files.length : counts.get(cat.id) || 0;
-    // Don't offer a category this folder has nothing in — except the one
-    // that's selected, or the list would jump out from under the click.
+    if (cat.phoneOnly && !isUsb()) continue;
+    const count =
+      cat.id === 'all'
+        ? currentEntries.filter((e) => !e.isDir).length
+        : counts.get(cat.id) || 0;
+    // Don't offer a category with nothing in it — except the one that's
+    // selected, or the list would jump out from under the click.
     if (!count && cat.id !== category) continue;
     const chip = document.createElement('button');
     chip.className = `chip${cat.id === category ? ' sel' : ''}`;
-    chip.textContent = `${cat.icon} ${cat.label}`;
+    chip.textContent = `${cat.icon} ${
+      cat.id === 'all' && isUsb() ? 'This folder' : cat.label
+    }`;
     const badge = document.createElement('span');
     badge.className = 'count';
     badge.textContent = count;
@@ -442,10 +512,16 @@ function renderCategoryBar() {
 const THUMB_BUDGET = 80;
 let thumbsRequested = 0;
 
+const ROW_CAP = 300;
+
 function renderEntries() {
   renderCategoryBar();
   thumbsRequested = 0;
-  crumbsEl.textContent = currentPath ?? '';
+  const cat = CATEGORIES.find((c) => c.id === category);
+  crumbsEl.textContent =
+    category === 'all'
+      ? currentPath ?? ''
+      : `${cat.label} · ${isUsb() ? selection.device.name : 'this folder'}`;
   contentEl.innerHTML = '';
 
   if (!currentEntries.length) {
@@ -474,7 +550,16 @@ function renderEntries() {
     updateToolbar();
     return;
   }
-  for (const entry of rows) contentEl.appendChild(renderEntry(entry));
+  // 8,000 rows of DOM is a hang, and nobody scrolls that far. Sort decides
+  // which end of the list you get -- by size, that's the big files.
+  const shown = rows.slice(0, ROW_CAP);
+  for (const entry of shown) contentEl.appendChild(renderEntry(entry));
+  if (rows.length > shown.length) {
+    const more = document.createElement('div');
+    more.className = 'more-note';
+    more.textContent = `Showing ${shown.length} of ${rows.length} — sort or search to see the rest`;
+    contentEl.appendChild(more);
+  }
   updateToolbar();
 }
 
@@ -552,6 +637,18 @@ function renderEntry(entry) {
     }
   }
   row.appendChild(nm);
+
+  // In a category view the rows come from all over the phone, so the folder
+  // is the thing that tells them apart.
+  if (category !== 'all' && entry.dir) {
+    const where = document.createElement('span');
+    where.className = 'where';
+    where.textContent = entry.dir
+      .replace('/storage/emulated/0/', '')
+      .replace('/sdcard/', '');
+    where.title = entry.dir;
+    row.appendChild(where);
+  }
 
   const sz = document.createElement('span');
   sz.className = 'sz';
