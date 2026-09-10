@@ -256,10 +256,11 @@ function readJson(req, limitBytes = 256 * 1024) {
 }
 
 function fmtBytes(n) {
-  if (!n) return '';
-  const u = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
-  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${u[i]}`;
+  if (n == null) return '';
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
 /**
@@ -453,14 +454,95 @@ ipcMain.handle('cable:listDir', async (_e, device, dirPath) => {
   return cable.listDir(device, dirPath);
 });
 
+let copyInFlight = false;
+
+/**
+ * Copying a folder off a phone can be gigabytes and minutes, so it says what
+ * it is about to move before it starts, refuses to run twice at once, and
+ * reports what landed and where.
+ */
 ipcMain.handle('cable:copy', async (_e, device, items, destDir) => {
-  cable.refreshMtpCache();
-  return cable.copyFiles(
-    device,
-    items,
-    (ev) => send('cable:progress', ev),
-    destDir
-  );
+  if (copyInFlight) return { cancelled: true, busy: true, saved: [] };
+  copyInFlight = true;
+  try {
+    cable.refreshMtpCache();
+    const target = destDir || SAVE_DIR;
+
+    // Folders don't carry a size in a directory listing; ask the phone.
+    const sized = [];
+    const unmeasured = [];
+    let totalBytes = 0;
+    let totalFiles = 0;
+    let totalFolders = 0;
+    for (const item of items) {
+      if (!item.isDir) {
+        sized.push({ ...item, bytes: item.size || 0 });
+        totalBytes += item.size || 0;
+        totalFiles += 1;
+        continue;
+      }
+      send('cable:progress', { type: 'measuring', name: item.name });
+      try {
+        const st = await cable.folderStats(device, item.path);
+        sized.push({ ...item, bytes: st.bytes });
+        totalBytes += st.bytes;
+        totalFiles += st.files;
+        totalFolders += st.folders;
+      } catch {
+        sized.push({ ...item, bytes: 0 });
+        unmeasured.push(item.name); // still copyable, just not countable
+      }
+    }
+
+    const parts = unmeasured.length
+      ? [`Couldn't measure ${unmeasured.join(', ')} — copy anyway?`]
+      : [
+          `${totalFiles} file${totalFiles === 1 ? '' : 's'}`,
+          totalFolders
+            ? `${totalFolders} subfolder${totalFolders === 1 ? '' : 's'}`
+            : null,
+          fmtBytes(totalBytes),
+        ].filter(Boolean);
+
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Cancel', 'Copy'],
+      defaultId: 1,
+      cancelId: 0,
+      message:
+        items.length === 1
+          ? `Copy “${items[0].name}” to ${path.basename(target)}?`
+          : `Copy ${items.length} items to ${path.basename(target)}?`,
+      detail: `${parts.join(' · ')}\n\nTo ${target}`,
+    });
+    if (response !== 1) return { cancelled: true, saved: [] };
+
+    const saved = await cable.copyFiles(
+      device,
+      sized,
+      (ev) => send('cable:progress', ev),
+      destDir
+    );
+
+    const copiedBytes = saved.reduce((sum, f) => sum + (f.bytes || 0), 0);
+    await dialog.showMessageBox(win, {
+      type: saved.length === items.length ? 'info' : 'warning',
+      buttons: ['Show in Finder', 'Done'],
+      defaultId: 1,
+      cancelId: 1,
+      message:
+        saved.length === items.length
+          ? `Copied ${saved.length} item${saved.length === 1 ? '' : 's'}`
+          : `Copied ${saved.length} of ${items.length} items`,
+      detail: `${fmtBytes(copiedBytes)} to ${target}`,
+    }).then(({ response: r }) => {
+      if (r === 0 && saved[0]) shell.showItemInFolder(saved[0].path);
+    });
+
+    return { cancelled: false, saved, bytes: copiedBytes, target };
+  } finally {
+    copyInFlight = false;
+  }
 });
 
 ipcMain.handle('cable:push', async (_e, device, localPaths, remoteDir) => {

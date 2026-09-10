@@ -448,6 +448,54 @@ async function listDir(device, dirPath) {
  * Copy the given files to ~/Downloads/Beam.
  * onEvent gets {type:'start'|'progress'|'done'|'error', ...} per file.
  */
+/**
+ * What Get Info would tell you: how much is in there before you move it.
+ * One shell call, because each adb round trip costs more than the work does.
+ * `du` on a big camera roll takes a few seconds, so callers show a wait.
+ */
+async function folderStats(device, remotePath) {
+  if (device.backend !== 'adb') throw new Error('needs USB debugging');
+  const adb = findAdb();
+  if (!adb) throw new Error('adb not found');
+  const q = shQuote(remotePath);
+  const { stdout } = await run(
+    adb,
+    [
+      '-s',
+      device.id,
+      'shell',
+      `f=$(find ${q} -type f 2>/dev/null | wc -l); ` +
+        `d=$(find ${q} -type d 2>/dev/null | wc -l); ` +
+        `k=$(du -sk ${q} 2>/dev/null | cut -f1); echo "$f|$d|$k"`,
+    ],
+    { timeout: 5 * 60 * 1000 }
+  );
+  const [files, dirs, kb] = stdout.trim().split('|').map((n) => Number(n) || 0);
+  return {
+    files,
+    // find counts the folder itself; nobody means that by "subfolders".
+    folders: Math.max(0, dirs - 1),
+    bytes: kb * 1024,
+  };
+}
+
+/** Bytes on disk under a path, for reporting how far a copy has got. */
+function localBytes(target) {
+  let total = 0;
+  const walk = (p) => {
+    let st;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      return;
+    }
+    if (!st.isDirectory()) return void (total += st.size);
+    for (const child of fs.readdirSync(p)) walk(path.join(p, child));
+  };
+  walk(target);
+  return total;
+}
+
 async function copyFiles(device, items, onEvent, destDir) {
   const target = destDir || SAVE_DIR;
   fs.mkdirSync(target, { recursive: true });
@@ -461,15 +509,33 @@ async function copyFiles(device, items, onEvent, destDir) {
     onEvent({ type: 'start', name: item.name, index: i, total: items.length });
     try {
       if (device.backend === 'adb') {
-        await adbPull(adb, device.id, item.path, dest, (pct) =>
-          onEvent({ type: 'progress', name: item.name, pct, index: i })
-        );
+        // adb reports a percentage per file, which on a folder resets on every
+        // one of them. Watching the destination grow measures the whole job.
+        const total = item.bytes ?? item.size ?? 0;
+        const ticker = setInterval(() => {
+          const copied = localBytes(dest);
+          onEvent({
+            type: 'bytes',
+            name: item.name,
+            copied,
+            total,
+            index: i,
+            pct: total ? Math.min(100, (copied / total) * 100) : null,
+          });
+        }, 700);
+        try {
+          await adbPull(adb, device.id, item.path, dest, (pct) =>
+            onEvent({ type: 'progress', name: item.name, pct, index: i })
+          );
+        } finally {
+          clearInterval(ticker);
+        }
       } else {
         await mtpGetFile(tools, item.path, dest, (pct) =>
           onEvent({ type: 'progress', name: item.name, pct, index: i })
         );
       }
-      saved.push({ name: path.basename(dest), path: dest });
+      saved.push({ name: path.basename(dest), path: dest, bytes: localBytes(dest) });
       onEvent({ type: 'done', name: path.basename(dest), path: dest, index: i });
     } catch (e) {
       onEvent({ type: 'error', name: item.name, message: e.message, index: i });
@@ -717,6 +783,7 @@ function refreshMtpCache() {
 
 module.exports = {
   indexMedia,
+  folderStats,
   SAVE_DIR,
   ADB_DEFAULT_PATH,
   toolStatus,

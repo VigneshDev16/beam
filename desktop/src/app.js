@@ -629,15 +629,17 @@ function renderEntry(entry) {
       box.onchange();
     }
   };
-  // Folders drag out too -- adb pulls a directory and everything under it.
-  // Click still navigates; dragging is a different gesture.
-  nm.draggable = true;
-  nm.addEventListener('dragstart', (e) => {
-    e.preventDefault();
-    startDragOut(entry, nm);
-  });
-  if (!entry.isDir && selection.kind === 'mac') {
-    nm.ondblclick = () => beam.openFile(entry.path);
+  // Files only: macOS would not take a dragged directory from us, so the
+  // folder route is Copy to, which reports what it is about to move.
+  if (!entry.isDir) {
+    nm.draggable = true;
+    nm.addEventListener('dragstart', (e) => {
+      e.preventDefault();
+      startDragOut(entry, nm);
+    });
+    if (selection.kind === 'mac') {
+      nm.ondblclick = () => beam.openFile(entry.path);
+    }
   }
   row.appendChild(nm);
 
@@ -857,17 +859,24 @@ function syncCopyButton() {
 
 btnCopy.onclick = async () => {
   const items = [...selected.values()];
-  setStatus(`Copying ${items.length} item${items.length === 1 ? '' : 's'}…`);
-  const saved = await cable.copy(selection.device, items, copyDest);
-  setProgress(null);
-  selected.clear();
-  renderEntries();
-  if (!saved.length) return setStatus('Nothing was copied — see the error above');
-  // Naming the folder is not the same as showing it; Finder does that better.
-  setStatus(
-    `Copied ${saved.length} of ${items.length} to ${copyDest || 'the Beam folder'}`
-  );
-  beam.reveal(saved[0].path);
+  // One copy at a time: the button is the easiest thing in the app to press
+  // twice, and the second press would pull everything again.
+  btnCopy.disabled = true;
+  setStatus(`Checking what's in ${items.length === 1 ? items[0].name : 'the selection'}…`);
+  try {
+    const result = await cable.copy(selection.device, items, copyDest);
+    setProgress(null);
+    if (result.busy) return setStatus('A copy is already running');
+    if (result.cancelled) return setStatus('Copy cancelled');
+    selected.clear();
+    renderEntries();
+    setStatus(
+      `Copied ${result.saved.length} of ${items.length} — ${fmtSize(result.bytes)} to ${result.target}`
+    );
+  } finally {
+    btnCopy.disabled = false;
+    updateToolbar();
+  }
 };
 
 btnCopyWhere.onclick = async () => {
@@ -917,9 +926,7 @@ async function fetchForDrag(entry, el) {
   if (dragFetching.has(entry.path)) return;
   dragFetching.add(entry.path);
   const label = el.textContent;
-  el.textContent = `⏳ ${entry.name} — copying ${
-    entry.isDir ? 'this folder ' : ''
-  }from the phone…`;
+  el.textContent = `⏳ ${entry.name} — copying from the phone…`;
   try {
     const local = await cable.prepareDrag(selection.device, entry);
     dragReady.set(entry.path, local);
@@ -960,9 +967,23 @@ contentEl.addEventListener('drop', async (e) => {
 // ------------------------------------------------------------------- events
 
 cable.onProgress((ev) => {
-  if (ev.type === 'start') setStatus(`${ev.name} (${ev.index + 1} of ${ev.total})…`);
-  else if (ev.type === 'progress') setProgress(ev.pct);
-  else if (ev.type === 'error') setStatus(`Failed on ${ev.name}: ${ev.message}`);
+  if (ev.type === 'measuring') {
+    setStatus(`Measuring ${ev.name}…`);
+  } else if (ev.type === 'start') {
+    setStatus(`${ev.name} (${ev.index + 1} of ${ev.total})…`);
+  } else if (ev.type === 'bytes') {
+    // How much has actually moved, which is the question during a long copy.
+    setProgress(ev.pct);
+    setStatus(
+      ev.total
+        ? `${ev.name} — ${fmtSize(ev.copied)} of ${fmtSize(ev.total)}`
+        : `${ev.name} — ${fmtSize(ev.copied)} copied`
+    );
+  } else if (ev.type === 'progress') {
+    setProgress(ev.pct);
+  } else if (ev.type === 'error') {
+    setStatus(`Failed on ${ev.name}: ${ev.message}`);
+  }
 });
 
 // A drag that hands nothing to macOS looks identical to one that does, so say

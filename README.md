@@ -38,7 +38,7 @@ by a cable, that should work too.
 | 📶 **Wi-Fi transfer, both directions** | Phone → laptop and laptop → phone, over your local network. Devices find each other automatically. |
 | 🔌 **USB cable mode** | Browse a connected Android like a drive and copy files either way. |
 | 🗂 **Manage the phone's files** | Create folders, rename, move, delete — from your laptop. |
-| 🖱 **Real drag and drop** | Drag files and folders out of the phone into Finder, and from Finder onto the phone — both ways, recursively. |
+| 🖱 **Real drag and drop** | Drag files out of the phone into Finder, and drop files or whole folders from Finder onto the phone. |
 | ⏱ **Remembers your devices** | A device you've used before comes back in about a second, and there's a history of what you've sent and received. |
 | 🖼 **Browse by kind** | Images, Videos, Audio, Documents, Archives — with real previews, including video frames and PDF first pages. |
 | 📷 **The whole phone at once** | A cabled phone is indexed from its own MediaStore in about a second, so Camera, Videos and Images span every folder — sort by size and the 7 GB clip is the first row. |
@@ -201,12 +201,16 @@ way. Copies land in the Beam folder unless you pick somewhere else with the
 **⋯** button next to it, and Finder opens on what arrived so you never have to
 guess where it went.
 
-> **Dragging a file or folder off the phone takes two drags.** Finder needs a real path,
+> **Dragging a file off the phone takes two drags.** Finder needs a real path,
 > so the first drag pulls the file to a temp copy — the row shows it copying,
 > and a ⤓ appears when it's done. Drag it again and it drops. macOS only lets
 > an app hand Finder a file *during* the drag it started, and a phone file
-> isn't on this machine yet when that moment passes. *Copy to Mac* is the
-> one-step route. Folders come across whole, with everything under them.
+> isn't on this machine yet when that moment passes.
+>
+> **Folders don't drag** — macOS wouldn't take a directory handed over that
+> way. Use *Copy to …*, which is the better route for a folder anyway: it
+> measures what's inside first, asks before it starts, and shows how much has
+> actually moved.
 
 **Managing phone files** (cable, USB debugging): *New folder*, *Rename*,
 *Cut* → *Paste* to move, and *Delete*.
