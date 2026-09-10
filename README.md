@@ -196,8 +196,10 @@ the laptop's drop zone.
 
 **Over a cable:** connect an Android with **USB debugging** enabled. It appears
 under *USB*, and the right pane becomes a file browser: tick files and
-*Copy to Mac*, drag them into Finder, or drop files in to copy them the other
-way.
+*Copy to …*, drag them into Finder, or drop files in to copy them the other
+way. Copies land in the Beam folder unless you pick somewhere else with the
+**⋯** button next to it, and Finder opens on what arrived so you never have to
+guess where it went.
 
 > **Dragging a file or folder off the phone takes two drags.** Finder needs a real path,
 > so the first drag pulls the file to a temp copy — the row shows it copying,

@@ -27,6 +27,7 @@ const btnCut = $('op-cut');
 const btnPaste = $('op-paste');
 const btnDelete = $('op-delete');
 const btnCopy = $('op-copy');
+const btnCopyWhere = $('op-copy-where');
 const catBar = $('catbar');
 const searchEl = $('search');
 const sortKeyEl = $('sort-key');
@@ -44,6 +45,7 @@ const dragFetching = new Set();
 
 let filterText = '';
 let category = 'all';
+let copyDest = localStorage.getItem('copyDest') || null; // null: the Beam folder
 let phoneIndex = null; // every media file on the cabled phone, or null
 let indexState = 'idle'; // idle | loading | ready | failed
 let sortKey = localStorage.getItem('sortKey') || 'name';
@@ -741,8 +743,17 @@ function updateToolbar() {
   btnPaste.disabled = !usb || !clipboard || clipboard.from === currentPath;
   btnDelete.disabled = !usb || n === 0;
   btnCopy.disabled = !usb || n === 0;
+  btnCopyWhere.disabled = !usb;
 
-  for (const b of [btnNewFolder, btnRename, btnCut, btnPaste, btnDelete, btnCopy]) {
+  for (const b of [
+    btnNewFolder,
+    btnRename,
+    btnCut,
+    btnPaste,
+    btnDelete,
+    btnCopy,
+    btnCopyWhere,
+  ]) {
     b.style.display = usb ? '' : 'none';
   }
   for (const el of [searchEl, sortKeyEl, sortDirEl]) {
@@ -836,13 +847,36 @@ btnDelete.onclick = async () => {
   setStatus(`Deleted ${deleted.length} item${deleted.length === 1 ? '' : 's'}`);
 };
 
+const destLabel = () =>
+  copyDest ? copyDest.split('/').filter(Boolean).pop() : 'Beam folder';
+
+function syncCopyButton() {
+  btnCopy.textContent = `Copy to ${destLabel()}`;
+  btnCopy.title = copyDest || 'The Beam folder in Downloads';
+}
+
 btnCopy.onclick = async () => {
   const items = [...selected.values()];
-  const saved = await cable.copy(selection.device, items);
+  setStatus(`Copying ${items.length} item${items.length === 1 ? '' : 's'}…`);
+  const saved = await cable.copy(selection.device, items, copyDest);
   setProgress(null);
   selected.clear();
   renderEntries();
-  setStatus(`Copied ${saved.length} of ${items.length} to the Beam folder`);
+  if (!saved.length) return setStatus('Nothing was copied — see the error above');
+  // Naming the folder is not the same as showing it; Finder does that better.
+  setStatus(
+    `Copied ${saved.length} of ${items.length} to ${copyDest || 'the Beam folder'}`
+  );
+  beam.reveal(saved[0].path);
+};
+
+btnCopyWhere.onclick = async () => {
+  const chosen = await beam.chooseDir(copyDest);
+  if (!chosen) return;
+  copyDest = chosen;
+  localStorage.setItem('copyDest', chosen);
+  syncCopyButton();
+  setStatus(`Copies will go to ${chosen}`);
 };
 
 // --------------------------------------------------------------- drag & drop
@@ -931,6 +965,12 @@ cable.onProgress((ev) => {
   else if (ev.type === 'error') setStatus(`Failed on ${ev.name}: ${ev.message}`);
 });
 
+// A drag that hands nothing to macOS looks identical to one that does, so say
+// so -- if this appears and Finder still refuses, the drop is the problem.
+beam.onDragHanded(({ files }) =>
+  setStatus(`Dragging ${files.map((f) => f.split('/').pop()).join(', ')} — drop it in Finder`)
+);
+
 wifi.onProgress((ev) => {
   if (ev.type === 'awaiting-approval') {
     setStatus(`Waiting for ${ev.device} to accept — code ${ev.code}`);
@@ -998,6 +1038,7 @@ $('add-wifi').onclick = connectByIp;
     ? `${state.name} · ${state.ips[0]}:${state.port}`
     : `${state.name} · offline`;
   liveDot.classList.toggle('off', !state.ips.length);
+  syncCopyButton();
   await selectMac();
   refreshUsb();
   refreshWifi();

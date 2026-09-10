@@ -448,15 +448,16 @@ async function listDir(device, dirPath) {
  * Copy the given files to ~/Downloads/Beam.
  * onEvent gets {type:'start'|'progress'|'done'|'error', ...} per file.
  */
-async function copyFiles(device, items, onEvent) {
-  fs.mkdirSync(SAVE_DIR, { recursive: true });
+async function copyFiles(device, items, onEvent, destDir) {
+  const target = destDir || SAVE_DIR;
+  fs.mkdirSync(target, { recursive: true });
   const adb = findAdb();
   const tools = mtpTools();
   const saved = [];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const dest = uniquePath(SAVE_DIR, path.basename(item.name));
+    const dest = uniquePath(target, path.basename(item.name));
     onEvent({ type: 'start', name: item.name, index: i, total: items.length });
     try {
       if (device.backend === 'adb') {

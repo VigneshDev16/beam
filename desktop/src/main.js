@@ -396,6 +396,24 @@ ipcMain.handle('local:listDir', async (_e, dirPath) => {
  * A thumbnail for one file in the Beam folder. Same confinement as listDir:
  * the renderer must not be able to render a preview of anything on disk.
  */
+/** Show a file where it landed, rather than just naming the folder. */
+ipcMain.on('local:reveal', (_e, target) => {
+  if (typeof target === 'string' && fs.existsSync(target)) {
+    shell.showItemInFolder(target);
+  }
+});
+
+/** Pick where copied files should go. Returns null if the person cancels. */
+ipcMain.handle('local:chooseDir', async (_e, startIn) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Copy phone files to',
+    defaultPath: typeof startIn === 'string' && startIn ? startIn : SAVE_DIR,
+    buttonLabel: 'Copy here',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return canceled || !filePaths.length ? null : filePaths[0];
+});
+
 ipcMain.handle('local:thumb', async (_e, filePath, size = 128) => {
   const target = path.resolve(String(filePath || ''));
   if (target !== SAVE_DIR && !target.startsWith(`${SAVE_DIR}${path.sep}`)) {
@@ -435,9 +453,14 @@ ipcMain.handle('cable:listDir', async (_e, device, dirPath) => {
   return cable.listDir(device, dirPath);
 });
 
-ipcMain.handle('cable:copy', async (_e, device, items) => {
+ipcMain.handle('cable:copy', async (_e, device, items, destDir) => {
   cable.refreshMtpCache();
-  return cable.copyFiles(device, items, (ev) => send('cable:progress', ev));
+  return cable.copyFiles(
+    device,
+    items,
+    (ev) => send('cable:progress', ev),
+    destDir
+  );
 });
 
 ipcMain.handle('cable:push', async (_e, device, localPaths, remoteDir) => {
@@ -581,6 +604,7 @@ ipcMain.on('drag:start', (event, filePaths) => {
   );
   if (!files.length) return;
   event.sender.startDrag({ files, file: files[0], icon: dragIcon() });
+  send('drag:handed', { files });
 });
 
 app.whenReady().then(() => {

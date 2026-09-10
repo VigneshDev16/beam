@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('beam', {
   startDrag: (paths) => ipcRenderer.send('drag:start', paths),
   listLocal: (dirPath) => ipcRenderer.invoke('local:listDir', dirPath),
   thumb: (filePath, size) => ipcRenderer.invoke('local:thumb', filePath, size),
+  reveal: (target) => ipcRenderer.send('local:reveal', target),
+  chooseDir: (startIn) => ipcRenderer.invoke('local:chooseDir', startIn),
+  onDragHanded: (cb) => ipcRenderer.on('drag:handed', (_e, d) => cb(d)),
   onApprovalPending: (cb) => ipcRenderer.on('approval:pending', (_e, d) => cb(d)),
   onApprovalResolved: (cb) => ipcRenderer.on('approval:resolved', (_e, d) => cb(d)),
   onApprovalAuto: (cb) => ipcRenderer.on('approval:auto', (_e, d) => cb(d)),
@@ -24,7 +27,8 @@ contextBridge.exposeInMainWorld('cable', {
   listDevices: () => ipcRenderer.invoke('cable:listDevices'),
   listDir: (device, dirPath) => ipcRenderer.invoke('cable:listDir', device, dirPath),
   index: (device) => ipcRenderer.invoke('cable:index', device),
-  copy: (device, items) => ipcRenderer.invoke('cable:copy', device, items),
+  copy: (device, items, destDir) =>
+    ipcRenderer.invoke('cable:copy', device, items, destDir),
   push: (device, localPaths, remoteDir) =>
     ipcRenderer.invoke('cable:push', device, localPaths, remoteDir),
   prepareDrag: (device, item) => ipcRenderer.invoke('cable:prepareDrag', device, item),
