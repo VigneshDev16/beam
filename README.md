@@ -40,6 +40,7 @@ by a cable, that should work too.
 | 🗂 **Manage the phone's files** | Create folders, rename, move, delete — from your laptop. |
 | 🖱 **Real drag and drop** | Drag files out of the phone into Finder; drag files — or whole folders — from Finder onto the phone. |
 | ⏱ **Remembers your devices** | A device you've used before comes back in about a second, and there's a history of what you've sent and received. |
+| 🖼 **Browse by kind** | Images, Videos, Audio, Documents, Archives — with real previews, including video frames and PDF first pages. |
 | 🍎 **Works with iPhone too** | Over Wi-Fi. iOS gives no USB file access to anyone, so cable mode is Android-only. |
 | 🔒 **Nothing leaves your network** | No server, no account, no telemetry. |
 
@@ -298,7 +299,7 @@ run on a physical phone before I'd call them verified.
 - [x] Transfer history, retry for failed files, per-file progress
 - [x] Folder drag-and-drop
 - [x] Background receiving on Android, with a notification when a file lands
-- [x] Search, sort and image thumbnails in the desktop explorer
+- [x] Search, sort, categories and previews in the desktop explorer
 - [ ] TLS for transfers
 - [ ] Copy/duplicate on the phone, and undo
 - [ ] Code-signed and notarised Mac build, Windows and Linux builds

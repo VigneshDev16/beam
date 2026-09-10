@@ -11,6 +11,8 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const Busboy = require('busboy');
+const crypto = require('crypto');
+const { execFile } = require('child_process');
 const cable = require('./cable');
 const wifiSend = require('./wifi-send');
 const approval = require('./approval');
@@ -47,6 +49,67 @@ function uniquePath(dir, filename) {
     i++;
   }
   return candidate;
+}
+
+/**
+ * QuickLook renders a preview for anything Finder can preview -- a video's
+ * first frame, a PDF's first page, a Keynote deck -- so the explorer isn't
+ * limited to files the renderer can decode itself. Absolute path: a bundled
+ * app launched from Finder has a minimal PATH.
+ */
+const QLMANAGE = '/usr/bin/qlmanage';
+const THUMB_CONCURRENCY = 3;
+const thumbQueue = [];
+let thumbRunning = 0;
+
+function pumpThumbs() {
+  while (thumbRunning < THUMB_CONCURRENCY && thumbQueue.length) {
+    const job = thumbQueue.shift();
+    thumbRunning += 1;
+    job().finally(() => {
+      thumbRunning -= 1;
+      pumpThumbs();
+    });
+  }
+}
+
+function queueThumb(work) {
+  return new Promise((resolve) => {
+    thumbQueue.push(() => work().then(resolve, () => resolve(null)));
+    pumpThumbs();
+  });
+}
+
+function thumbCacheDir() {
+  const dir = path.join(app.getPath('userData'), 'thumbs');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function makeThumb(filePath, cached, size) {
+  return new Promise((resolve) => {
+    // qlmanage names its output after the input file, so render into a
+    // scratch directory and move the one PNG it produced into place.
+    const scratch = `${cached}.tmp`;
+    fs.mkdirSync(scratch, { recursive: true });
+    execFile(
+      QLMANAGE,
+      ['-t', '-s', String(size), '-o', scratch, filePath],
+      { timeout: 10000 },
+      () => {
+        try {
+          const made = fs.readdirSync(scratch).find((f) => f.endsWith('.png'));
+          if (!made) throw new Error('no thumbnail');
+          fs.renameSync(path.join(scratch, made), cached);
+          resolve(cached);
+        } catch {
+          resolve(null);
+        } finally {
+          fs.rmSync(scratch, { recursive: true, force: true });
+        }
+      }
+    );
+  });
 }
 
 let transferId = 0;
@@ -327,6 +390,33 @@ ipcMain.handle('local:listDir', async (_e, dirPath) => {
     a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1
   );
   return { path: target, entries, root: SAVE_DIR };
+});
+
+/**
+ * A thumbnail for one file in the Beam folder. Same confinement as listDir:
+ * the renderer must not be able to render a preview of anything on disk.
+ */
+ipcMain.handle('local:thumb', async (_e, filePath, size = 128) => {
+  const target = path.resolve(String(filePath || ''));
+  if (target !== SAVE_DIR && !target.startsWith(`${SAVE_DIR}${path.sep}`)) {
+    return null;
+  }
+  let st;
+  try {
+    st = fs.statSync(target);
+  } catch {
+    return null;
+  }
+  if (st.isDirectory()) return null;
+
+  const key = crypto
+    .createHash('sha1')
+    .update(`${target}:${st.mtimeMs}:${st.size}:${size}`)
+    .digest('hex');
+  const cached = path.join(thumbCacheDir(), `${key}.png`);
+  if (fs.existsSync(cached)) return cached;
+
+  return queueThumb(() => makeThumb(target, cached, size));
 });
 
 ipcMain.handle('cable:listDevices', async () => {

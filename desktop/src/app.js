@@ -27,6 +27,7 @@ const btnCut = $('op-cut');
 const btnPaste = $('op-paste');
 const btnDelete = $('op-delete');
 const btnCopy = $('op-copy');
+const catBar = $('catbar');
 const searchEl = $('search');
 const sortKeyEl = $('sort-key');
 const sortDirEl = $('sort-dir');
@@ -41,6 +42,7 @@ let clipboard = null; // {items, from}
 const dragReady = new Set();
 
 let filterText = '';
+let category = 'all';
 let sortKey = localStorage.getItem('sortKey') || 'name';
 let sortAsc = localStorage.getItem('sortAsc') !== 'false';
 
@@ -310,6 +312,7 @@ async function renderRecent() {
 async function openDir(dirPath) {
   selected.clear();
   filterText = '';
+  category = 'all';
   searchEl.value = '';
   contentEl.innerHTML = '<div class="blank">Loading…</div>';
   try {
@@ -330,7 +333,54 @@ async function openDir(dirPath) {
   }
 }
 
-const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
+// Images the renderer can decode straight from disk; everything else goes
+// through QuickLook in the main process.
+const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|svg|avif)$/i;
+
+/**
+ * The categories a phone file manager shows, because "where are my videos"
+ * is a better question than "which folder did that land in".
+ */
+const CATEGORIES = [
+  { id: 'all', label: 'All', icon: '🗂' },
+  {
+    id: 'image',
+    label: 'Images',
+    icon: '🖼',
+    re: /\.(jpe?g|png|gif|webp|bmp|svg|avif|heic|heif|tiff?|raw|dng)$/i,
+  },
+  {
+    id: 'video',
+    label: 'Videos',
+    icon: '🎬',
+    re: /\.(mp4|mov|m4v|avi|mkv|webm|3gp|mpe?g|wmv|flv)$/i,
+  },
+  {
+    id: 'audio',
+    label: 'Audio',
+    icon: '🎵',
+    re: /\.(mp3|m4a|aac|wav|flac|ogg|opus|aiff?|wma|amr)$/i,
+  },
+  {
+    id: 'doc',
+    label: 'Documents',
+    icon: '📄',
+    re: /\.(pdf|docx?|xlsx?|pptx?|pages|numbers|key|txt|md|rtf|csv|epub|odt|ods|odp)$/i,
+  },
+  {
+    id: 'archive',
+    label: 'Archives',
+    icon: '🗜',
+    re: /\.(zip|rar|7z|tar|gz|bz2|xz|dmg|iso|apk)$/i,
+  },
+  { id: 'other', label: 'Other', icon: '📦' },
+];
+
+function categoryOf(entry) {
+  if (entry.isDir) return 'folder';
+  const hit = CATEGORIES.find((c) => c.re && c.re.test(entry.name));
+  return hit ? hit.id : 'other';
+}
 
 /**
  * Folders always sort first -- a file explorer that mixes them by size is
@@ -338,9 +388,15 @@ const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|svg)$/i;
  */
 function visibleEntries() {
   const needle = filterText.trim().toLowerCase();
-  const rows = needle
+  let rows = needle
     ? currentEntries.filter((e) => e.name.toLowerCase().includes(needle))
     : currentEntries.slice();
+
+  // Picking a category means you're looking for files of a kind, so the
+  // folders in this listing stop being useful and get out of the way.
+  if (category !== 'all') {
+    rows = rows.filter((e) => !e.isDir && categoryOf(e) === category);
+  }
 
   const dir = sortAsc ? 1 : -1;
   rows.sort((a, b) => {
@@ -355,7 +411,40 @@ function visibleEntries() {
   return rows;
 }
 
+function renderCategoryBar() {
+  catBar.innerHTML = '';
+  const files = currentEntries.filter((e) => !e.isDir);
+  const counts = new Map();
+  for (const f of files) {
+    counts.set(categoryOf(f), (counts.get(categoryOf(f)) || 0) + 1);
+  }
+
+  for (const cat of CATEGORIES) {
+    const count = cat.id === 'all' ? files.length : counts.get(cat.id) || 0;
+    // Don't offer a category this folder has nothing in — except the one
+    // that's selected, or the list would jump out from under the click.
+    if (!count && cat.id !== category) continue;
+    const chip = document.createElement('button');
+    chip.className = `chip${cat.id === category ? ' sel' : ''}`;
+    chip.textContent = `${cat.icon} ${cat.label}`;
+    const badge = document.createElement('span');
+    badge.className = 'count';
+    badge.textContent = count;
+    chip.appendChild(badge);
+    chip.onclick = () => {
+      category = cat.id;
+      renderEntries();
+    };
+    catBar.appendChild(chip);
+  }
+}
+
+const THUMB_BUDGET = 80;
+let thumbsRequested = 0;
+
 function renderEntries() {
+  renderCategoryBar();
+  thumbsRequested = 0;
   crumbsEl.textContent = currentPath ?? '';
   contentEl.innerHTML = '';
 
@@ -374,10 +463,14 @@ function renderEntries() {
 
   const rows = visibleEntries();
   if (!rows.length) {
+    const label = CATEGORIES.find((c) => c.id === category)?.label;
+    const what = filterText
+      ? `“${filterText.replace(/[<&]/g, '')}”`
+      : `any ${label?.toLowerCase() ?? 'files'}`;
     contentEl.innerHTML =
-      '<div class="blank"><div class="big">🔍</div><div>Nothing matches “' +
-      filterText.replace(/[<&]/g, '') +
-      '”.</div></div>';
+      `<div class="blank"><div class="big">🔍</div><div>This folder has no ${
+        filterText ? 'match for ' : ''
+      }${what}.</div></div>`;
     updateToolbar();
     return;
   }
@@ -401,27 +494,44 @@ function renderEntry(entry) {
   };
   row.appendChild(box);
 
-  // A thumbnail only works for files this Mac can actually read; a phone's
+  // Thumbnails only work for files this Mac can actually read; a phone's
   // files would each have to be pulled first, which a listing shouldn't do.
-  const thumbable =
-    selection.kind === 'mac' && !entry.isDir && IMAGE_RE.test(entry.name);
-  if (thumbable) {
+  const local = selection.kind === 'mac' && !entry.isDir;
+  const icon = document.createElement('span');
+  icon.className = 'ficon';
+  icon.textContent = entry.isDir
+    ? '📁'
+    : CATEGORIES.find((c) => c.id === categoryOf(entry))?.icon ?? '📄';
+  row.appendChild(icon);
+
+  if (local && IMAGE_RE.test(entry.name)) {
+    // Straight from disk: no round trip, and it's already an image. It has to
+    // go into the document now rather than on load -- a lazy image that isn't
+    // in the DOM never loads at all.
     const thumb = document.createElement('img');
     thumb.className = 'thumb';
     thumb.loading = 'lazy';
     thumb.src = `file://${encodeURI(entry.path)}`;
-    // A broken image would sit there as a grey square; the emoji is better.
-    thumb.onerror = () => {
-      thumb.replaceWith(document.createTextNode('📄'));
-    };
-    row.appendChild(thumb);
+    thumb.onerror = () => thumb.replaceWith(icon);
+    icon.replaceWith(thumb);
+  } else if (local) {
+    // QuickLook can preview a video frame or a PDF's first page. It costs a
+    // process per file, so it's capped to what's plausibly on screen.
+    if (thumbsRequested < THUMB_BUDGET) {
+      thumbsRequested += 1;
+      beam.thumb(entry.path, 128).then((p) => {
+        if (!p || !icon.isConnected) return;
+        const thumb = document.createElement('img');
+        thumb.className = 'thumb';
+        thumb.src = `file://${encodeURI(p)}`;
+        thumb.onload = () => icon.replaceWith(thumb);
+      });
+    }
   }
 
   const nm = document.createElement('span');
   nm.className = `nm ${entry.isDir ? 'dir' : 'file'}`;
-  nm.textContent = thumbable
-    ? entry.name
-    : `${entry.isDir ? '📁' : '📄'} ${entry.name}`;
+  nm.textContent = entry.name;
   nm.onclick = () => {
     if (entry.isDir) {
       dirStack.push(currentPath);
@@ -540,6 +650,7 @@ function updateToolbar() {
   for (const el of [searchEl, sortKeyEl, sortDirEl]) {
     el.style.display = browsing ? '' : 'none';
   }
+  catBar.style.display = browsing ? '' : 'none';
 
   if (n) setStatus(`${n} item${n === 1 ? '' : 's'} selected`);
   else if (clipboard)

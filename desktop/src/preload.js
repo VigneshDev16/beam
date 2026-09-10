@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('beam', {
   pathForFile: (file) => webUtils.getPathForFile(file),
   startDrag: (paths) => ipcRenderer.send('drag:start', paths),
   listLocal: (dirPath) => ipcRenderer.invoke('local:listDir', dirPath),
+  thumb: (filePath, size) => ipcRenderer.invoke('local:thumb', filePath, size),
   onApprovalPending: (cb) => ipcRenderer.on('approval:pending', (_e, d) => cb(d)),
   onApprovalResolved: (cb) => ipcRenderer.on('approval:resolved', (_e, d) => cb(d)),
   onApprovalAuto: (cb) => ipcRenderer.on('approval:auto', (_e, d) => cb(d)),
