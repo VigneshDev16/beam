@@ -254,7 +254,7 @@ class BeamReceiverModule(private val ctx: ReactApplicationContext) :
             obj.put("app", "beam")
             obj.put("name", deviceName())
             obj.put("platform", "android")
-            obj.put("version", "0.3.0")
+            obj.put("version", "0.4.0")
             obj.put("features", JSONArray().put("offer"))
             json(Response.Status.OK, obj)
           }

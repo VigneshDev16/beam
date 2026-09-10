@@ -285,7 +285,7 @@ RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
       @"app" : @"beam",
       @"name" : self ? [self deviceName] : @"iPhone",
       @"platform" : @"ios",
-      @"version" : @"0.3.0",
+      @"version" : @"0.4.0",
       @"features" : @[ @"offer" ],
     }];
   }];
