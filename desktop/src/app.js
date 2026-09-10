@@ -39,7 +39,8 @@ let localRoot = null;
 const dirStack = [];
 const selected = new Map(); // path -> entry
 let clipboard = null; // {items, from}
-const dragReady = new Set();
+const dragReady = new Map(); // phone path -> local copy, ready to drag
+const dragFetching = new Set();
 
 let filterText = '';
 let category = 'all';
@@ -858,25 +859,41 @@ function pathsFromDrop(e) {
     .filter(Boolean);
 }
 
-async function startDragOut(entry, el) {
-  // Local files are already on disk; phone files need fetching first.
+/**
+ * Finder needs a real path, so a phone file is pulled to a temp copy first.
+ *
+ * The catch: startDrag only works while the drag session the browser just
+ * opened is still live. Awaiting the pull first means this handler has already
+ * returned and the mouse button is long since up, so the file is copied and
+ * then dropped precisely nowhere. Hence two drags on a phone file -- the first
+ * fetches and says so, the second drags a path we already have, with nothing
+ * awaited in between.
+ */
+function startDragOut(entry, el) {
+  // Local files are already on disk: one drag, no round trip.
   if (selection.kind === 'mac') return beam.startDrag(entry.path);
 
-  if (dragReady.has(entry.path)) {
-    beam.startDrag(await cable.prepareDrag(selection.device, entry));
-    return;
-  }
+  const ready = dragReady.get(entry.path);
+  if (ready) return beam.startDrag(ready);
+
+  fetchForDrag(entry, el);
+}
+
+async function fetchForDrag(entry, el) {
+  if (dragFetching.has(entry.path)) return;
+  dragFetching.add(entry.path);
   const label = el.textContent;
-  el.textContent = `⏳ ${entry.name} — copying…`;
+  el.textContent = `⏳ ${entry.name} — copying from the phone…`;
   try {
     const local = await cable.prepareDrag(selection.device, entry);
-    dragReady.add(entry.path);
-    el.textContent = label;
+    dragReady.set(entry.path, local);
     setStatus(`${entry.name} is ready — drag it again to drop it in Finder`);
-    beam.startDrag(local);
+    el.classList.add('ready');
   } catch (e) {
-    el.textContent = label;
     setStatus(`Could not prepare ${entry.name}: ${e.message}`);
+  } finally {
+    dragFetching.delete(entry.path);
+    el.textContent = label;
   }
 }
 

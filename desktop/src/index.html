@@ -182,6 +182,10 @@
     .entry input { accent-color: var(--accent); }
     .entry .nm { flex: 1; min-width: 0; cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .entry .nm.file { cursor: grab; }
+    /* Pulled from the phone and sitting in a temp file: this one will drop. */
+    .entry .nm.ready::after {
+      content: '⤓'; color: var(--ok); font-size: 11px; margin-left: 7px;
+    }
     .entry .nm.dir { cursor: pointer; }
     .entry .sz { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
     .rename-input {

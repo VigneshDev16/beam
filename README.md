@@ -199,6 +199,13 @@ under *USB*, and the right pane becomes a file browser: tick files and
 *Copy to Mac*, drag them into Finder, or drop files in to copy them the other
 way.
 
+> **Dragging a file off the phone takes two drags.** Finder needs a real path,
+> so the first drag pulls the file to a temp copy — the row shows it copying,
+> and a ⤓ appears when it's done. Drag it again and it drops. macOS only lets
+> an app hand Finder a file *during* the drag it started, and a phone file
+> isn't on this machine yet when that moment passes. *Copy to Mac* is the
+> one-step route.
+
 **Managing phone files** (cable, USB debugging): *New folder*, *Rename*,
 *Cut* → *Paste* to move, and *Delete*.
 
