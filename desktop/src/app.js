@@ -627,15 +627,15 @@ function renderEntry(entry) {
       box.onchange();
     }
   };
-  if (!entry.isDir) {
-    nm.draggable = true;
-    nm.addEventListener('dragstart', (e) => {
-      e.preventDefault();
-      startDragOut(entry, nm);
-    });
-    if (selection.kind === 'mac') {
-      nm.ondblclick = () => beam.openFile(entry.path);
-    }
+  // Folders drag out too -- adb pulls a directory and everything under it.
+  // Click still navigates; dragging is a different gesture.
+  nm.draggable = true;
+  nm.addEventListener('dragstart', (e) => {
+    e.preventDefault();
+    startDragOut(entry, nm);
+  });
+  if (!entry.isDir && selection.kind === 'mac') {
+    nm.ondblclick = () => beam.openFile(entry.path);
   }
   row.appendChild(nm);
 
@@ -883,7 +883,9 @@ async function fetchForDrag(entry, el) {
   if (dragFetching.has(entry.path)) return;
   dragFetching.add(entry.path);
   const label = el.textContent;
-  el.textContent = `⏳ ${entry.name} — copying from the phone…`;
+  el.textContent = `⏳ ${entry.name} — copying ${
+    entry.isDir ? 'this folder ' : ''
+  }from the phone…`;
   try {
     const local = await cable.prepareDrag(selection.device, entry);
     dragReady.set(entry.path, local);
