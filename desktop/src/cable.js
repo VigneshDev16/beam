@@ -120,17 +120,21 @@ function parseLsLine(line) {
   if (!line.trim() || /^total\s/.test(line)) return null;
   // perms links owner group size date time name
   const m = line.match(
-    /^([bcdlps-][rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+\S+\s+\S+\s+(.*)$/
+    /^([bcdlps-][rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/
   );
   if (!m) return null;
-  const [, perms, size, rawName] = m;
+  const [, perms, size, day, time, rawName] = m;
   // Symlinks render as "name -> target"; keep the name side.
   const name = perms.startsWith('l') ? rawName.split(' -> ')[0] : rawName;
   if (!name || name === '.' || name === '..') return null;
+  // toybox prints "2025-01-22 13:30" in the phone's own timezone, which is
+  // near enough to this machine's for a listing.
+  const stamp = Date.parse(`${day}T${time}`);
   return {
     name,
     isDir: perms.startsWith('d'),
     size: perms.startsWith('d') ? null : Number(size),
+    mtime: Number.isNaN(stamp) ? null : stamp,
   };
 }
 

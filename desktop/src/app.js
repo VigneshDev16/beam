@@ -62,6 +62,23 @@ const setProgress = (pct) => {
   barEl.firstElementChild.style.width = pct == null ? '0%' : `${pct}%`;
 };
 
+/** Finder's shape: recent things get a time, old things get a year. */
+function fmtDate(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const now = new Date();
+  const hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const sameDay = (a, b) => a.toDateString() === b.toDateString();
+  if (sameDay(d, now)) return `Today ${hm}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(d, yesterday)) return `Yesterday ${hm}`;
+  const day = d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return d.getFullYear() === now.getFullYear()
+    ? `${day} ${hm}`
+    : `${day} ${d.getFullYear()}`;
+}
+
 function fmtSize(n) {
   if (n == null) return '';
   if (!n) return '0 B';
@@ -654,6 +671,12 @@ function renderEntry(entry) {
     where.title = entry.dir;
     row.appendChild(where);
   }
+
+  const dt = document.createElement('span');
+  dt.className = 'dt';
+  dt.textContent = fmtDate(entry.mtime);
+  if (entry.mtime) dt.title = new Date(entry.mtime).toLocaleString();
+  row.appendChild(dt);
 
   const sz = document.createElement('span');
   sz.className = 'sz';
