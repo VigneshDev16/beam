@@ -158,18 +158,21 @@ so the React Native side stays identical across platforms.
 
 ## Install
 
-### Desktop (macOS, Apple Silicon)
+**[Download the latest release →](https://github.com/VigneshDev16/beam/releases/latest)**
+— a macOS `.dmg` and a signed Android `.apk`, with SHA-256 checksums in the
+release notes.
+
+> The Mac build isn't code-signed (that needs a paid Apple Developer ID), so
+> the first launch needs **right-click → Open**. Android will ask you to allow
+> installing outside the Play Store.
+
+### Building the desktop app yourself
 
 ```bash
 cd desktop && npm install && npm run dist
 ```
 
-Open `desktop/release/Beam-0.1.0-arm64.dmg` and drag Beam to Applications.
-
-> The build isn't code-signed (that needs a paid Apple Developer ID), so the
-> first launch needs **right-click → Open**.
-
-Or run it from source with `npm start`.
+The dmg lands in `desktop/release/`. Or run it from source with `npm start`.
 
 ### The mobile app
 
